@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Resume Intelligence System</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 10px; margin-bottom: 20px; }
+        .tabs { display: flex; gap: 10px; margin-bottom: 20px; }
+        .tab { flex: 1; padding: 15px; border: none; border-radius: 8px; cursor: pointer; font-size: 16px; font-weight: bold; background: #f3f4f6; }
+        .tab.active { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
+        .content { background: white; padding: 30px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        .upload-area { border: 3px dashed #667eea; border-radius: 10px; padding: 60px; text-align: center; cursor: pointer; background: #f8f9ff; }
+        .upload-area:hover { background: #eef2ff; }
+        .resume-card { border: 2px solid #e5e7eb; border-radius: 10px; padding: 20px; margin-bottom: 15px; }
+        .resume-card h3 { color: #667eea; margin-bottom: 10px; }
+        .resume-info { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 10px 0; color: #666; }
+        .skills { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+        .skill-tag { background: #eef2ff; color: #667eea; padding: 5px 12px; border-radius: 15px; font-size: 14px; }
+        .chat-container { height: 500px; display: flex; flex-direction: column; }
+        .chat-messages { flex: 1; overflow-y: auto; padding: 20px; background: #f9fafb; border-radius: 8px; margin-bottom: 15px; }
+        .message { margin-bottom: 15px; display: flex; }
+        .message.user { justify-content: flex-end; }
+        .message-content { max-width: 70%; padding: 12px 16px; border-radius: 12px; }
+        .message.user .message-content { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
+        .message.assistant .message-content { background: #e5e7eb; color: #1f2937; }
+        .chat-input { display: flex; gap: 10px; }
+        .chat-input input { flex: 1; padding: 12px; border: 2px solid #d1d5db; border-radius: 8px; font-size: 16px; }
+        .btn { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 12px 24px; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; }
+        .btn:hover { opacity: 0.9; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .status { margin-top: 15px; padding: 12px; border-radius: 8px; font-weight: bold; }
+        .status.success { background: #d1fae5; color: #065f46; }
+        .status.error { background: #fee2e2; color: #991b1b; }
+        .status.processing { background: #dbeafe; color: #1e40af; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🧠 Resume Intelligence System</h1>
+            <p style="margin-top: 10px; opacity: 0.9;">AI-Powered Resume Analysis & Query with CrewAI Agents</p>
+            <div style="margin-top: 15px;">
+                <span style="background: rgba(255,255,255,0.2); padding: 8px 16px; border-radius: 5px; margin-right: 10px;">
+                    📄 Resumes: <span id="statsTotal">0</span>
+                </span>
+                <span style="background: rgba(255,255,255,0.2); padding: 8px 16px; border-radius: 5px; margin-right: 10px;">
+                    💬 Messages: <span id="statsMessages">0</span>
+                </span>
+                <button onclick="clearAllData()" style="background: #ef4444; color: white; padding: 8px 16px; border: none; border-radius: 5px; cursor: pointer;">
+                    Clear All
+                </button>
+            </div>
+        </div>
+
+        <div class="tabs">
+            <button class="tab active" onclick="showTab('upload')">📤 Upload</button>
+            <button class="tab" onclick="showTab('database')">🗄️ Database</button>
+            <button class="tab" onclick="showTab('chat')">💬 Chat</button>
+        </div>
+
+        <!-- Upload Tab -->
+        <div id="tab-upload" class="content">
+            <h2 style="margin-bottom: 20px; color: #667eea;">Upload Resumes</h2>
+            <div class="upload-area" onclick="document.getElementById('fileInput').click()">
+                <input type="file" id="fileInput" multiple accept=".pdf,.docx" style="display: none;" onchange="uploadFiles()">
+                <div style="font-size: 48px; margin-bottom: 10px;">📁</div>
+                <p style="font-size: 18px; color: #4b5563;">Click to upload PDF or DOCX files</p>
+                <p style="font-size: 14px; color: #9ca3af; margin-top: 5px;">Multiple files supported</p>
+            </div>
+            <div id="uploadStatus"></div>
+        </div>
+
+        <!-- Database Tab -->
+        <div id="tab-database" class="content hidden">
+            <h2 style="margin-bottom: 20px; color: #667eea;">📊 Resume Database</h2>
+            <div id="resumeList"></div>
+        </div>
+
+        <!-- Chat Tab -->
+        <div id="tab-chat" class="content hidden">
+            <h2 style="margin-bottom: 20px; color: #667eea;">💬 AI Chat Assistant</h2>
+            <div class="chat-container">
+                <div class="chat-messages" id="chatMessages">
+                    <div style="text-align: center; padding: 40px; color: #9ca3af;">
+                        <p style="font-size: 16px; margin-bottom: 20px;">Start chatting by asking a question</p>
+                        <p style="font-size: 14px; margin-bottom: 10px;">Try asking:</p>
+                        <button onclick="setQuery('What is the first candidate\\'s email?')" style="margin: 5px; padding: 8px 16px; background: #f3f4f6; border: none; border-radius: 5px; cursor: pointer;">
+                            What is the first candidate's email?
+                        </button>
+                        <button onclick="setQuery('Find Python developers')" style="margin: 5px; padding: 8px 16px; background: #f3f4f6; border: none; border-radius: 5px; cursor: pointer;">
+                            Find Python developers
+                        </button>
+                        <button onclick="setQuery('List all candidates')" style="margin: 5px; padding: 8px 16px; background: #f3f4f6; border: none; border-radius: 5px; cursor: pointer;">
+                            List all candidates
+                        </button>
+                    </div>
+                </div>
+                <div class="chat-input">
+                    <input type="text" id="queryInput" placeholder="Ask about resumes..." onkeypress="if(event.key==='Enter') sendQuery()">
+                    <button class="btn" onclick="sendQuery()">🔍 Ask</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000';
+        let chatHistory = [];
+        let resumes = [];
+
+        // Show/hide tabs
+        function showTab(tabName) {
+            ['upload', 'database', 'chat'].forEach(tab => {
+                document.getElementById(`tab-${tab}`).classList.add('hidden');
+            });
+            document.getElementById(`tab-${tabName}`).classList.remove('hidden');
+
+            document.querySelectorAll('.tab').forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+
+            if (tabName === 'database') loadResumes();
+            if (tabName === 'chat') renderChat();
+        }
+
+        // Upload files
+        async function uploadFiles() {
+            const fileInput = document.getElementById('fileInput');
+            const files = fileInput.files;
+            const status = document.getElementById('uploadStatus');
+
+            if (files.length === 0) return;
+
+            status.className = 'status processing';
+            status.textContent = '⏳ Processing resumes with CrewAI agents...';
+
+            const formData = new FormData();
+            for (let file of files) {
+                formData.append('files', file);
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/upload`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                status.className = 'status success';
+                status.textContent = `✅ Successfully processed ${data.resumes.length} resumes!`;
+
+                fileInput.value = '';
+                updateStats();
+                
+                setTimeout(() => {
+                    document.querySelectorAll('.tab')[1].click();
+                }, 1500);
+
+            } catch (error) {
+                console.error('Upload error:', error);
+                status.className = 'status error';
+                status.textContent = '❌ Error: Could not upload. Make sure API server is running on port 8000.';
+            }
+        }
+
+        // Load resumes
+        async function loadResumes() {
+            const list = document.getElementById('resumeList');
+            list.innerHTML = '<p style="text-align: center; color: #9ca3af;">Loading...</p>';
+
+            try {
+                const response = await fetch(`${API_BASE}/resumes`);
+                const data = await response.json();
+                resumes = data.resumes;
+
+                if (resumes.length === 0) {
+                    list.innerHTML = '<p style="text-align: center; color: #9ca3af; padding: 40px;">No resumes uploaded yet</p>';
+                } else {
+                    list.innerHTML = resumes.map(r => `
+                        <div class="resume-card">
+                            <h3>${r.name || 'Unknown'}</h3>
+                            <div class="resume-info">
+                                <div>📧 ${r.email || 'N/A'}</div>
+                                <div>📱 ${r.phone || 'N/A'}</div>
+                                <div>💼 ${r.experience || 'N/A'}</div>
+                                <div>📄 ${r.filename || 'N/A'}</div>
+                            </div>
+                            <div class="skills">
+                                ${(r.skills || []).map(s => `<span class="skill-tag">${s}</span>`).join('')}
+                            </div>
+                        </div>
+                    `).join('');
+                }
+                updateStats();
+            } catch (error) {
+                console.error('Load error:', error);
+                list.innerHTML = '<p style="text-align: center; color: #ef4444;">Error loading resumes. Check console.</p>';
+            }
+        }
+
+        // Send query
+        async function sendQuery() {
+            const input = document.getElementById('queryInput');
+            const query = input.value.trim();
+            if (!query) return;
+
+            chatHistory.push({ role: 'user', content: query });
+            input.value = '';
+            renderChat();
+
+            // Show processing
+            chatHistory.push({ role: 'assistant', content: '🤔 Analyzing with CrewAI agents...' });
+            renderChat();
+
+            try {
+                const response = await fetch(`${API_BASE}/query`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ query })
+                });
+
+                const data = await response.json();
+                
+                // Replace processing message with actual response
+                chatHistory[chatHistory.length - 1] = { role: 'assistant', content: data.answer };
+                renderChat();
+                updateStats();
+
+            } catch (error) {
+                console.error('Query error:', error);
+                chatHistory[chatHistory.length - 1] = { 
+                    role: 'assistant', 
+                    content: '❌ Error: Could not connect to API server on port 8000.' 
+                };
+                renderChat();
+            }
+        }
+
+        // Render chat
+        function renderChat() {
+            const container = document.getElementById('chatMessages');
+            container.innerHTML = chatHistory.map(msg => `
+                <div class="message ${msg.role}">
+                    <div class="message-content">
+                        ${msg.content.replace(/\n/g, '<br>')}
+                    </div>
+                </div>
+            `).join('');
+            container.scrollTop = container.scrollHeight;
+        }
+
+        // Set query from example
+        function setQuery(text) {
+            document.getElementById('queryInput').value = text;
+        }
+
+        // Update stats
+        async function updateStats() {
+            try {
+                const response = await fetch(`${API_BASE}/stats`);
+                const data = await response.json();
+                document.getElementById('statsTotal').textContent = data.total_resumes || 0;
+                document.getElementById('statsMessages').textContent = chatHistory.length;
+            } catch (error) {
+                console.error('Stats error:', error);
+            }
+        }
+
+        // Clear all data
+        async function clearAllData() {
+            if (!confirm('Clear all resumes and chat history?')) return;
+
+            try {
+                await fetch(`${API_BASE}/resumes/clear`, { method: 'DELETE' });
+                resumes = [];
+                chatHistory = [];
+                updateStats();
+                loadResumes();
+                renderChat();
+                alert('✅ All data cleared!');
+            } catch (error) {
+                alert('❌ Error clearing data');
+            }
+        }
+
+        // Load stats on page load
+        updateStats();
+    </script>
+</body>
+</html>
