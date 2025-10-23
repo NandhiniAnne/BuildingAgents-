@@ -105,15 +105,16 @@ class ResumeData(BaseModel):
 
 # ============== CREWAI AGENTS ==============
 
-# Agent 1: Resume Parser Agent
+# Agent 1: Resume Parser Agent (Optimized for Mistral)
 resume_parser_agent = Agent(
     role="Resume Data Extraction Specialist",
-    goal="Extract structured information from resume text including name, email, phone, and experience",
-    backstory="""You are an expert at parsing resumes and extracting key information accurately. 
-    You understand various resume formats and can identify contact details and experience.
-    Return information in a structured format.""",
+    goal="Extract name, email, phone, and years of experience from resumes",
+    backstory="""You extract contact information from resumes accurately.
+    Return data in the exact format requested. Be precise and fast.""",
     llm=llm,
-    verbose=True  # ← Changed to True to see output
+    verbose=True,
+    max_iter=3,
+    allow_delegation=False
 )
 
 # Agent 2: Skills Analyzer Agent (Optimized for Mistral)
@@ -124,8 +125,8 @@ skills_analyzer_agent = Agent(
     Return ONLY a comma-separated list. Be concise and fast.""",
     llm=llm,
     verbose=True,
-    max_iter=3,  # Limit iterations to prevent endless loops
-    allow_delegation=False  # Don't delegate to other agents
+    max_iter=3,
+    allow_delegation=False
 )
 
 # Agent 3: Query Assistant Agent (Optimized for Mistral)
@@ -167,94 +168,160 @@ def extract_text_from_docx(file_path: str) -> str:
 
 
 def extract_resume_info_with_agents(text: str, filename: str) -> dict:
-    """Use CrewAI agents to extract resume information - OPTIMIZED VERSION"""
+    """Use BOTH CrewAI agents to extract resume information - AI-POWERED EXTRACTION"""
     
     print(f"\n{'='*60}")
     print(f"🤖 PROCESSING RESUME: {filename}")
     print(f"{'='*60}\n")
     
-    # ============== QUICK EXTRACTION WITH REGEX ==============
-    print("⚡ Quick extraction with regex for basic info...")
+    # ============== AGENT 1: Resume Parser - Extract Contact Info ==============
+    print("📋 AGENT 1: Resume Parser Agent - Extracting contact info...\n")
     
-    # Email
-    email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
-    emails = re.findall(email_pattern, text)
-    email = emails[0] if emails else "Not found"
+    parser_task = Task(
+        description=f"""Extract contact information from this resume. Be very careful with names.
+
+Resume text:
+{text[:1200]}
+
+IMPORTANT RULES:
+1. Name: Extract ONLY the person's first and last name. Remove ALL certifications (PMP, MBA, CISSP, etc.), titles, and credentials.
+2. Email: Look for email pattern (contains @ symbol)
+3. Phone: Look for phone number (10+ digits with optional formatting)
+4. Experience: Look for phrases like "X years", "X+ years of experience", or calculate from earliest job date
+
+Examples:
+- "Donald Belvin, PMP, SMC" → Name: Donald Belvin
+- "PRANAY REDDY Sr. Data Engineer" → Name: Pranay Reddy
+- "Mahesh Bolikonda PMP and PMI-ACP" → Name: Mahesh Bolikonda
+
+Return ONLY in this exact format:
+Name: [first last name only, no credentials]
+Email: [email@domain.com]
+Phone: [phone number]
+Experience: [X years]
+
+If any field is not found, write "Not found" for that field.""",
+        expected_output="Contact information in specified format without any credentials",
+        agent=resume_parser_agent
+    )
     
-    # Phone
-    phone_patterns = [
-        r'(?:Mob|Mobile|Phone|Tel|Cell)[\s#:]*([+]?\d{1,3}[-.\s]?\d{3}[-.\s]?\d{3}[-.\s]?\d{4})',
-        r'\+?\d{1,3}[-.\s]?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}',
-        r'\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b',
-    ]
-    phone = "Not found"
-    for pattern in phone_patterns:
-        matches = re.findall(pattern, text, re.IGNORECASE)
-        if matches:
-            phone = matches[0] if isinstance(matches[0], str) else ''.join(matches[0])
-            phone = re.sub(r'[^\d+\-\s()]', '', phone).strip()
-            break
-    
-    # Name
-    lines = [line.strip() for line in text.split('\n') if line.strip()]
-    name = "Not found"
-    for line in lines[:10]:
-        if any(skip in line.lower() for skip in ['objective', 'email', 'phone', 'address', 'po box', 'summary']):
-            continue
-        words = line.split()
-        if 2 <= len(words) <= 5 and all(word[0].isupper() for word in words[:3] if word):
-            name = re.sub(r',.*', '', line)
-            name = re.sub(r'\s+(MBA|MS|PMP|CISSP|PhD).*', '', name, flags=re.IGNORECASE)
-            break
-    
-    if name == "Not found" and email != "Not found":
-        name = email.split('@')[0].replace('.', ' ').replace('_', ' ').title()
-    
-    # Experience
-    exp_patterns = [
-        r'(\d+)\+?\s*years?\s+(?:of\s+)?experience',
-        r'experience[:\s]+(\d+)\+?\s*years?'
-    ]
-    experience = "Not specified"
-    for pattern in exp_patterns:
-        match = re.search(pattern, text.lower())
-        if match:
-            experience = f"{match.group(1)} years"
-            break
-    
-    print(f"✅ Basic info extracted: {name} | {email}")
-    
-    # ============== AGENT: Skills Analyzer (Only This One) ==============
-    print("\n💡 AGENT: Technical Skills Analyst - Extracting skills...")
+    # ============== AGENT 2: Skills Analyzer ==============
+    print("\n💡 AGENT 2: Technical Skills Analyst - Extracting skills...\n")
     
     skills_task = Task(
-        description=f"""List technical skills from this resume as comma-separated values.
+        description=f"""Extract technical skills from this resume.
 
-Resume:
-{text[:800]}
+Resume text:
+{text[:1000]}
 
-Extract: certifications, programming languages, tools, frameworks.
-Return format: skill1, skill2, skill3
-Maximum 10 skills.""",
-        expected_output="Comma-separated technical skills list",
+List: certifications, programming languages, tools, frameworks, cloud platforms.
+Return ONLY comma-separated skills (max 12).
+Example: Python, AWS, Docker, React""",
+        expected_output="Comma-separated technical skills",
         agent=skills_analyzer_agent
     )
     
-    skills_crew = Crew(
-        agents=[skills_analyzer_agent],
-        tasks=[skills_task],
+    # ============== CREATE CREW WITH BOTH AGENTS ==============
+    extraction_crew = Crew(
+        agents=[resume_parser_agent, skills_analyzer_agent],
+        tasks=[parser_task, skills_task],
         process=Process.sequential,
         verbose=True
     )
     
+    print("\n🚀 Starting CrewAI with BOTH agents...\n")
+    
+    # Execute the crew
     try:
-        print("🚀 Running Skills Analyzer Agent...\n")
-        result = skills_crew.kickoff()
-        skills_text = str(result)
-        skills = [s.strip() for s in skills_text.split(',') if s.strip()][:15]
-        print(f"\n✅ Skills extracted: {len(skills)} skills found")
+        results = extraction_crew.kickoff()
+        
+        # Get results from both tasks
+        if hasattr(results, 'tasks_output'):
+            parser_result = str(results.tasks_output[0].raw)
+            skills_result = str(results.tasks_output[1].raw)
+        else:
+            # Fallback if structure is different
+            parser_result = str(results)
+            skills_result = ""
+        
+        print(f"\n✅ Parser Agent Result:\n{parser_result}\n")
+        print(f"✅ Skills Agent Result:\n{skills_result}\n")
+        
+        # Parse contact info from agent result
+        name = "Not found"
+        email = "Not found"
+        phone = "Not found"
+        experience = "Not specified"
+        
+        for line in parser_result.split('\n'):
+            line = line.strip()
+            if line.startswith('Name:'):
+                name = line.replace('Name:', '').strip()
+                # Clean up credentials and titles from name
+                name = re.sub(r',.*', '', name)  # Remove everything after comma
+                name = re.sub(r'\s+(PMP|MBA|MS|PhD|CISSP|CISM|CISA|CRISC|PMI-ACP|SMC|Sr\.|Jr\.|III|II).*
+        
+        # Parse skills
+        skills = []
+        if skills_result:
+            # Remove any extra text and get just the skills
+            skills_text = skills_result.split('\n')[0]  # Take first line
+            skills = [s.strip() for s in skills_text.split(',') if s.strip()][:12]
+        
+        print(f"📊 Extracted Data Summary:")
+        print(f"   Name: {name}")
+        print(f"   Email: {email}")
+        print(f"   Phone: {phone}")
+        print(f"   Experience: {experience}")
+        print(f"   Skills: {len(skills)} found")
+        
     except Exception as e:
-        print(f"❌ Agent error: {e}")
+        print(f"❌ Agent execution error: {e}")
+        print("⚠️  Falling back to regex extraction...")
+        
+        # FALLBACK: Regex extraction
+        email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+        emails = re.findall(email_pattern, text)
+        email = emails[0] if emails else "Not found"
+        
+        phone_patterns = [
+            r'(?:Mob|Mobile|Phone|Tel|Cell)[\s#:]*([+]?\d{1,3}[-.\s]?\d{3}[-.\s]?\d{3}[-.\s]?\d{4})',
+            r'\+?\d{1,3}[-.\s]?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}',
+            r'\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b',
+        ]
+        phone = "Not found"
+        for pattern in phone_patterns:
+            matches = re.findall(pattern, text, re.IGNORECASE)
+            if matches:
+                phone = matches[0] if isinstance(matches[0], str) else ''.join(matches[0])
+                phone = re.sub(r'[^\d+\-\s()]', '', phone).strip()
+                break
+        
+        lines = [line.strip() for line in text.split('\n') if line.strip()]
+        name = "Not found"
+        for line in lines[:10]:
+            if any(skip in line.lower() for skip in ['objective', 'email', 'phone', 'address', 'po box', 'summary']):
+                continue
+            words = line.split()
+            if 2 <= len(words) <= 5 and all(word[0].isupper() for word in words[:3] if word):
+                name = re.sub(r',.*', '', line)
+                name = re.sub(r'\s+(MBA|MS|PMP|CISSP|PhD).*', '', name, flags=re.IGNORECASE)
+                break
+        
+        if name == "Not found" and email != "Not found":
+            name = email.split('@')[0].replace('.', ' ').replace('_', ' ').title()
+        
+        exp_patterns = [
+            r'(\d+)\+?\s*years?\s+(?:of\s+)?experience',
+            r'experience[:\s]+(\d+)\+?\s*years?'
+        ]
+        experience = "Not specified"
+        for pattern in exp_patterns:
+            match = re.search(pattern, text.lower())
+            if match:
+                experience = f"{match.group(1)} years"
+                break
+        
         skills = []
     
     print(f"\n{'='*60}")
@@ -296,7 +363,7 @@ async def get_stats():
 
 @app.post("/upload")
 async def upload_resumes(files: List[UploadFile] = File(...)):
-    """Upload and process resume files with ALL AGENTS"""
+    """Upload and process resume files with BOTH AGENTS"""
     
     processed_resumes = []
     points = []
@@ -322,7 +389,7 @@ async def upload_resumes(files: List[UploadFile] = File(...)):
         if "Error" in text:
             continue
         
-        # Extract info using MULTIPLE agents
+        # Extract info using BOTH AI AGENTS (not regex!)
         resume_info = extract_resume_info_with_agents(text, file.filename)
         resume_info['id'] = file_id
         resume_info['uploaded_at'] = datetime.now().isoformat()
@@ -384,7 +451,7 @@ async def query_resumes(request: QueryRequest):
     # Create query embedding
     query_embedding = embeddings.embed_query(request.query)
     
-    # Search in Qdrant using the correct method
+    # Search in Qdrant
     search_results = qdrant_client.search(
         collection_name=COLLECTION_NAME,
         query_vector=query_embedding,
@@ -419,7 +486,7 @@ async def query_resumes(request: QueryRequest):
     
     print("💬 AGENT 3: Query Assistant Agent - Answering query...\n")
     
-    # Create task for Query Assistant Agent (Shorter prompt for Mistral)
+    # Create task for Query Assistant Agent
     query_task = Task(
         description=f"""Answer: "{request.query}"
 
@@ -436,7 +503,7 @@ Provide a brief 2-3 sentence answer with specific names and details.""",
         agents=[query_assistant_agent],
         tasks=[query_task],
         process=Process.sequential,
-        verbose=True  # ← Changed to True to see agent output
+        verbose=True
     )
     
     result = query_crew.kickoff()
@@ -473,6 +540,297 @@ if __name__ == "__main__":
     print(f"📁 Upload Directory: {UPLOAD_DIR}")
     print(f"📏 Vector Size: {VECTOR_SIZE}")
     print("\n" + "="*60)
-    print("🎯 ALL 3 AGENTS ARE NOW ACTIVE AND VERBOSE!")
+    print("🎯 BOTH AGENTS ACTIVE: Parser + Skills Analyzer!")
+    print("="*60 + "\n")
+    uvicorn.run(app, host="127.0.0.1", port=8000)
+, '', name, flags=re.IGNORECASE)
+                name = name.strip()
+            elif line.startswith('Email:'):
+                email = line.replace('Email:', '').strip()
+            elif line.startswith('Phone:'):
+                phone = line.replace('Phone:', '').strip()
+            elif line.startswith('Experience:'):
+                experience = line.replace('Experience:', '').strip()
+        
+        # Parse skills
+        skills = []
+        if skills_result:
+            # Remove any extra text and get just the skills
+            skills_text = skills_result.split('\n')[0]  # Take first line
+            skills = [s.strip() for s in skills_text.split(',') if s.strip()][:12]
+        
+        print(f"📊 Extracted Data Summary:")
+        print(f"   Name: {name}")
+        print(f"   Email: {email}")
+        print(f"   Phone: {phone}")
+        print(f"   Experience: {experience}")
+        print(f"   Skills: {len(skills)} found")
+        
+    except Exception as e:
+        print(f"❌ Agent execution error: {e}")
+        print("⚠️  Falling back to regex extraction...")
+        
+        # FALLBACK: Regex extraction
+        email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+        emails = re.findall(email_pattern, text)
+        email = emails[0] if emails else "Not found"
+        
+        phone_patterns = [
+            r'(?:Mob|Mobile|Phone|Tel|Cell)[\s#:]*([+]?\d{1,3}[-.\s]?\d{3}[-.\s]?\d{3}[-.\s]?\d{4})',
+            r'\+?\d{1,3}[-.\s]?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}',
+            r'\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b',
+        ]
+        phone = "Not found"
+        for pattern in phone_patterns:
+            matches = re.findall(pattern, text, re.IGNORECASE)
+            if matches:
+                phone = matches[0] if isinstance(matches[0], str) else ''.join(matches[0])
+                phone = re.sub(r'[^\d+\-\s()]', '', phone).strip()
+                break
+        
+        lines = [line.strip() for line in text.split('\n') if line.strip()]
+        name = "Not found"
+        for line in lines[:10]:
+            if any(skip in line.lower() for skip in ['objective', 'email', 'phone', 'address', 'po box', 'summary']):
+                continue
+            words = line.split()
+            if 2 <= len(words) <= 5 and all(word[0].isupper() for word in words[:3] if word):
+                name = re.sub(r',.*', '', line)
+                name = re.sub(r'\s+(MBA|MS|PMP|CISSP|PhD).*', '', name, flags=re.IGNORECASE)
+                break
+        
+        if name == "Not found" and email != "Not found":
+            name = email.split('@')[0].replace('.', ' ').replace('_', ' ').title()
+        
+        exp_patterns = [
+            r'(\d+)\+?\s*years?\s+(?:of\s+)?experience',
+            r'experience[:\s]+(\d+)\+?\s*years?'
+        ]
+        experience = "Not specified"
+        for pattern in exp_patterns:
+            match = re.search(pattern, text.lower())
+            if match:
+                experience = f"{match.group(1)} years"
+                break
+        
+        skills = []
+    
+    print(f"\n{'='*60}")
+    print(f"✅ RESUME PROCESSING COMPLETE")
+    print(f"{'='*60}\n")
+    
+    return {
+        "filename": filename,
+        "name": name,
+        "email": email,
+        "phone": phone,
+        "skills": skills,
+        "experience": experience,
+        "full_text": text[:2000]
+    }
+
+
+# ============== API ENDPOINTS ==============
+
+@app.get("/")
+async def root():
+    return {"message": "Resume Intelligence API", "status": "running"}
+
+
+@app.get("/stats")
+async def get_stats():
+    """Get database statistics"""
+    try:
+        collection_info = qdrant_client.get_collection(COLLECTION_NAME)
+        count = collection_info.points_count
+        return {
+            "total_resumes": count,
+            "collection": COLLECTION_NAME,
+            "status": "connected"
+        }
+    except Exception as e:
+        return {"total_resumes": 0, "status": "error", "message": str(e)}
+
+
+@app.post("/upload")
+async def upload_resumes(files: List[UploadFile] = File(...)):
+    """Upload and process resume files with BOTH AGENTS"""
+    
+    processed_resumes = []
+    points = []
+    
+    for file in files:
+        # Save file
+        file_id = str(uuid.uuid4())
+        file_extension = os.path.splitext(file.filename)[1]
+        file_path = os.path.join(UPLOAD_DIR, f"{file_id}{file_extension}")
+        
+        content = await file.read()
+        with open(file_path, "wb") as f:
+            f.write(content)
+        
+        # Extract text
+        if file_extension == '.pdf':
+            text = extract_text_from_pdf(file_path)
+        elif file_extension == '.docx':
+            text = extract_text_from_docx(file_path)
+        else:
+            continue
+        
+        if "Error" in text:
+            continue
+        
+        # Extract info using BOTH AI AGENTS (not regex!)
+        resume_info = extract_resume_info_with_agents(text, file.filename)
+        resume_info['id'] = file_id
+        resume_info['uploaded_at'] = datetime.now().isoformat()
+        
+        # Create embedding
+        embedding_text = f"Name: {resume_info['name']}\nEmail: {resume_info['email']}\nSkills: {', '.join(resume_info['skills'])}"
+        embedding = embeddings.embed_query(embedding_text)
+        
+        # Store in Qdrant
+        point = PointStruct(
+            id=file_id,
+            vector=embedding,
+            payload=resume_info
+        )
+        points.append(point)
+        processed_resumes.append(resume_info)
+    
+    # Upload to Qdrant
+    if points:
+        qdrant_client.upsert(
+            collection_name=COLLECTION_NAME,
+            points=points
+        )
+    
+    return {
+        "message": f"Successfully processed {len(processed_resumes)} resumes",
+        "resumes": processed_resumes
+    }
+
+
+@app.get("/resumes")
+async def get_all_resumes():
+    """Get all stored resumes"""
+    try:
+        results = qdrant_client.scroll(
+            collection_name=COLLECTION_NAME,
+            limit=100
+        )
+        
+        resumes = []
+        for point in results[0]:
+            resume_data = point.payload
+            resume_data['id'] = str(point.id)
+            resumes.append(resume_data)
+        
+        return {"resumes": resumes, "count": len(resumes)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/query", response_model=QueryResponse)
+async def query_resumes(request: QueryRequest):
+    """Query resumes using Query Assistant Agent"""
+    
+    print(f"\n{'='*60}")
+    print(f"🔍 NEW QUERY: {request.query}")
+    print(f"{'='*60}\n")
+    
+    # Create query embedding
+    query_embedding = embeddings.embed_query(request.query)
+    
+    # Search in Qdrant
+    search_results = qdrant_client.search(
+        collection_name=COLLECTION_NAME,
+        query_vector=query_embedding,
+        limit=5
+    )
+    
+    if not search_results:
+        return QueryResponse(
+            answer="No matching resumes found in the database.",
+            sources=[]
+        )
+    
+    # Prepare context for Query Assistant Agent
+    context = "Relevant resumes found:\n\n"
+    sources = []
+    
+    for i, result in enumerate(search_results[:3], 1):
+        resume = result.payload
+        context += f"{i}. {resume.get('name', 'N/A')}\n"
+        context += f"   Email: {resume.get('email', 'N/A')}\n"
+        context += f"   Phone: {resume.get('phone', 'N/A')}\n"
+        context += f"   Skills: {', '.join(resume.get('skills', []))}\n"
+        context += f"   Experience: {resume.get('experience', 'Not specified')}\n\n"
+        
+        sources.append({
+            "name": resume.get('name', 'N/A'),
+            "email": resume.get('email', 'N/A'),
+            "phone": resume.get('phone', 'N/A'),
+            "skills": resume.get('skills', []),
+            "score": result.score
+        })
+    
+    print("💬 AGENT 3: Query Assistant Agent - Answering query...\n")
+    
+    # Create task for Query Assistant Agent
+    query_task = Task(
+        description=f"""Answer: "{request.query}"
+
+Data:
+{context}
+
+Provide a brief 2-3 sentence answer with specific names and details.""",
+        expected_output="Brief answer with candidate details",
+        agent=query_assistant_agent
+    )
+    
+    # Execute with CrewAI
+    query_crew = Crew(
+        agents=[query_assistant_agent],
+        tasks=[query_task],
+        process=Process.sequential,
+        verbose=True
+    )
+    
+    result = query_crew.kickoff()
+    answer = str(result)
+    
+    print(f"\n✅ Query Assistant Answer:\n{answer}\n")
+    print(f"{'='*60}\n")
+    
+    return QueryResponse(answer=answer, sources=sources)
+
+
+@app.delete("/resumes/clear")
+async def clear_all_resumes():
+    """Clear all resumes from database"""
+    try:
+        qdrant_client.delete_collection(COLLECTION_NAME)
+        
+        # Recreate collection
+        qdrant_client.create_collection(
+            collection_name=COLLECTION_NAME,
+            vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
+        )
+        
+        return {"message": "All resumes cleared successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+if __name__ == "__main__":
+    print("🚀 Starting Resume Intelligence API Server...")
+    print(f"📊 Qdrant: {QDRANT_URL}")
+    print(f"🤖 Ollama Model: {OLLAMA_MODEL}")
+    print(f"🔢 Embedding Model: {EMBEDDING_MODEL}")
+    print(f"📁 Upload Directory: {UPLOAD_DIR}")
+    print(f"📏 Vector Size: {VECTOR_SIZE}")
+    print("\n" + "="*60)
+    print("🎯 BOTH AGENTS ACTIVE: Parser + Skills Analyzer!")
     print("="*60 + "\n")
     uvicorn.run(app, host="127.0.0.1", port=8000)
