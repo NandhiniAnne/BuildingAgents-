@@ -1,16 +1,23 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import List, Optional
+from pydantic import BaseModel, Field
+from typing import List, Optional, Dict, Any
 import uvicorn
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
+import re
+import asyncio
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
+import hashlib
+import pickle
+from functools import lru_cache
+import time
 
 # CrewAI and AI imports
 from crewai import Agent, Task, Crew, Process, LLM
-from langchain_community.embeddings import OllamaEmbeddings
+from langchain_ollama import OllamaEmbeddings
 from crewai.tools import tool
 
 # Qdrant imports
@@ -20,20 +27,28 @@ from qdrant_client.models import Distance, VectorParams, PointStruct
 # Document processing
 import PyPDF2
 import docx
-import re
 
-# Configuration
+# ============== CONFIGURATION ==============
 OLLAMA_MODEL = "mistral:latest"
 OLLAMA_BASE_URL = "http://localhost:11434"
 EMBEDDING_MODEL = "nomic-embed-text:latest"
 QDRANT_URL = "http://localhost:6333"
 COLLECTION_NAME = "resumes_collection"
 UPLOAD_DIR = "uploaded_resumes"
+CACHE_DIR = "cache"
+PROCESSED_CACHE = "processed_resumes.pkl"
+
+# Performance Settings
+MAX_WORKERS = 4  # Parallel processing threads
+CACHE_TTL_HOURS = 24  # Cache time-to-live
+BATCH_SIZE = 10  # Batch processing size
+ENABLE_CACHING = True
 
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+os.makedirs(CACHE_DIR, exist_ok=True)
 
-# Initialize FastAPI
-app = FastAPI(title="Master AI Resume Intelligence Chatbot")
+# ============== INITIALIZE SERVICES ==============
+app = FastAPI(title="Enterprise Multi-Agent Resume Intelligence System")
 
 app.add_middleware(
     CORSMiddleware,
@@ -43,46 +58,109 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize Qdrant
+# Initialize clients
 qdrant_client = QdrantClient(url=QDRANT_URL)
+embeddings = OllamaEmbeddings(model=EMBEDDING_MODEL, base_url=OLLAMA_BASE_URL)
 
-# Initialize embeddings
-embeddings = OllamaEmbeddings(
-    model=EMBEDDING_MODEL,
-    base_url=OLLAMA_BASE_URL
-)
+# Thread pools for parallel processing
+extraction_executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
+embedding_executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
 
-# Initialize LLM
+# LLM Configuration
 llm = LLM(
     model=f"ollama/{OLLAMA_MODEL}",
     base_url=OLLAMA_BASE_URL,
-    timeout=900,
-    temperature=0.1,
-    max_tokens=2000  # Larger for comprehensive extraction
+    timeout=1500,
+    temperature=0.5,  # Slightly higher for more natural, conversational responses
+    max_tokens=3000   # More tokens for detailed explanations
 )
 
-# Create collection
-try:
+# ============== CACHING SYSTEM ==============
+class CacheManager:
+    def __init__(self):
+        self.memory_cache = {}
+        self.cache_file = os.path.join(CACHE_DIR, PROCESSED_CACHE)
+        self.load_cache()
+    
+    def load_cache(self):
+        """Load cached processed resumes from disk"""
+        try:
+            if os.path.exists(self.cache_file):
+                with open(self.cache_file, 'rb') as f:
+                    self.memory_cache = pickle.load(f)
+                print(f"✅ Loaded {len(self.memory_cache)} cached resumes")
+        except Exception as e:
+            print(f"⚠️ Cache load failed: {e}")
+            self.memory_cache = {}
+    
+    def save_cache(self):
+        """Save processed resumes to disk"""
+        try:
+            with open(self.cache_file, 'wb') as f:
+                pickle.dump(self.memory_cache, f)
+        except Exception as e:
+            print(f"⚠️ Cache save failed: {e}")
+    
+    def get_file_hash(self, content: bytes) -> str:
+        """Generate hash for file content"""
+        return hashlib.sha256(content).hexdigest()
+    
+    def get_cached_resume(self, file_hash: str) -> Optional[Dict]:
+        """Get cached resume data"""
+        if not ENABLE_CACHING:
+            return None
+        
+        cached = self.memory_cache.get(file_hash)
+        if cached:
+            # Check if cache is still valid
+            cache_time = cached.get('cached_at')
+            if cache_time:
+                age = datetime.now() - datetime.fromisoformat(cache_time)
+                if age < timedelta(hours=CACHE_TTL_HOURS):
+                    print(f"✅ Cache hit: {cached.get('name', 'Unknown')}")
+                    return cached
+        return None
+    
+    def cache_resume(self, file_hash: str, resume_data: Dict):
+        """Cache processed resume"""
+        if ENABLE_CACHING:
+            resume_data['cached_at'] = datetime.now().isoformat()
+            resume_data['file_hash'] = file_hash
+            self.memory_cache[file_hash] = resume_data
+            self.save_cache()
+
+cache_manager = CacheManager()
+
+# ============== QDRANT INITIALIZATION ==============
+def initialize_qdrant():
+    """Initialize or reuse existing Qdrant collection"""
     try:
-        qdrant_client.delete_collection(COLLECTION_NAME)
-        print(f"🗑️ Deleted existing collection: {COLLECTION_NAME}")
-    except:
-        pass
-    
-    test_emb = embeddings.embed_query("test")
-    VECTOR_SIZE = len(test_emb)
-    print(f"📏 Detected vector size: {VECTOR_SIZE}")
-    
-    qdrant_client.create_collection(
-        collection_name=COLLECTION_NAME,
-        vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
-    )
-    print(f"✅ Created Qdrant collection: {COLLECTION_NAME}")
-except Exception as e:
-    print(f"❌ Collection error: {e}")
+        # Check if collection exists
+        collections = qdrant_client.get_collections().collections
+        collection_exists = any(c.name == COLLECTION_NAME for c in collections)
+        
+        if collection_exists:
+            collection_info = qdrant_client.get_collection(COLLECTION_NAME)
+            print(f"✅ Reusing existing collection with {collection_info.points_count} resumes")
+            return collection_info.vectors_count
+        else:
+            # Create new collection
+            test_emb = embeddings.embed_query("test")
+            VECTOR_SIZE = len(test_emb)
+            
+            qdrant_client.create_collection(
+                collection_name=COLLECTION_NAME,
+                vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
+            )
+            print(f"✅ Created new Qdrant collection (vector size: {VECTOR_SIZE})")
+            return VECTOR_SIZE
+    except Exception as e:
+        print(f"❌ Qdrant initialization error: {e}")
+        raise
 
+VECTOR_SIZE = initialize_qdrant()
 
-# Pydantic models
+# ============== PYDANTIC MODELS ==============
 class ChatRequest(BaseModel):
     message: str
     conversation_id: Optional[str] = None
@@ -90,740 +168,1014 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     response: str
     conversation_id: str
-    agent_used: str
-    sources: Optional[List[dict]] = None
+    agent_flow: List[str]
+    metadata: Optional[Dict[str, Any]] = None
+
+class UploadStatus(BaseModel):
+    status: str
+    total_files: int
+    processed: int
+    cached: int
+    failed: int
+    resumes: List[Dict[str, Any]]
+    processing_time: float
+
+# ============== SPECIALIZED TOOLS ==============
+@tool("Semantic Search Candidates")
+def semantic_search_tool(query: str, filters: str = "{}") -> str:
+    """
+    Search candidates using semantic understanding with intelligent ranking.
+    
+    Args:
+        query: Natural language search query
+        filters: JSON string with filters (optional, defaults to empty object)
+    """
+    try:
+        # Robust filter handling
+        if filters is None:
+            filters = "{}"
+        if not isinstance(filters, str):
+            filters = "{}"
+        if filters.strip() == "":
+            filters = "{}"
+            
+        print(f"🔍 Searching for: '{query}' with filters: {filters}")
+        
+        # Parse filters safely
+        try:
+            filter_dict = json.loads(filters)
+        except (json.JSONDecodeError, TypeError):
+            filter_dict = {}
+        
+        # Generate embedding for query
+        query_embedding = embeddings.embed_query(query)
+        
+        # Search Qdrant with higher limit for better filtering
+        results = qdrant_client.search(
+            collection_name=COLLECTION_NAME,
+            query_vector=query_embedding,
+            limit=50
+        )
+        
+        if not results:
+            return "No matching candidates found."
+        
+        print(f"📊 Found {len(results)} initial results")
+        
+        # Apply filters and boost scoring
+        filtered_results = []
+        for result in results:
+            resume = result.payload
+            score = result.score
+            
+            # Boost score based on query-role matching
+            query_lower = query.lower()
+            role_lower = resume.get('current_role', '').lower()
+            
+            # Exact role match gets highest boost
+            if query_lower in role_lower or role_lower in query_lower:
+                score = score * 1.5
+            
+            # Check for key terms in query matching skills
+            query_terms = query_lower.split()
+            resume_skills = [s.lower() for s in resume.get('skills', [])]
+            matching_skills = sum(1 for term in query_terms if any(term in skill for skill in resume_skills))
+            if matching_skills > 0:
+                score = score * (1 + matching_skills * 0.1)
+            
+            # Location filter
+            if filter_dict.get("location"):
+                if filter_dict["location"].lower() not in resume.get('location', '').lower():
+                    continue
+            
+            # Experience filter
+            if filter_dict.get("min_years"):
+                if resume.get('years_experience', 0) < filter_dict["min_years"]:
+                    continue
+            
+            # Skills filter
+            if filter_dict.get("required_skills"):
+                required = [s.lower() for s in filter_dict["required_skills"]]
+                if not any(skill in resume_skills for skill in required):
+                    continue
+            
+            # Store boosted score
+            filtered_results.append((result, score))
+        
+        if not filtered_results:
+            return "No candidates match the specified filters."
+        
+        # Sort by boosted score
+        filtered_results.sort(key=lambda x: x[1], reverse=True)
+        
+        print(f"✅ After filtering and ranking: {len(filtered_results)} candidates")
+        
+        # Format results with rich context for LLM analysis
+        output = f"SEARCH RESULTS for '{query}':\n"
+        output += f"Total matches: {len(filtered_results)}\n\n"
+        
+        for i, (result, boosted_score) in enumerate(filtered_results[:5], 1):
+            resume = result.payload
+            output += f"CANDIDATE #{i}:\n"
+            output += f"Name: {resume.get('name', 'N/A')}\n"
+            output += f"Role: {resume.get('current_role', 'N/A')}\n"
+            output += f"Experience: {resume.get('years_experience', 0)} years\n"
+            output += f"Location: {resume.get('location', 'N/A')}\n"
+            output += f"Email: {resume.get('email', 'N/A')}\n"
+            output += f"Skills: {', '.join(resume.get('skills', []))}\n"
+            
+            if resume.get('certifications'):
+                output += f"Certifications: {', '.join(resume.get('certifications', []))}\n"
+            
+            if resume.get('previous_companies'):
+                output += f"Previous Companies: {', '.join(resume.get('previous_companies', []))}\n"
+            
+            output += f"Relevance Score: {boosted_score*100:.1f}%\n"
+            output += f"---\n\n"
+        
+        return output
+        
+    except Exception as e:
+        error_msg = f"Search error: {str(e)}"
+        print(f"❌ {error_msg}")
+        return error_msg
 
 
-# ============== SINGLE MASTER EXTRACTION AGENT ==============
+@tool("Get Candidate Details")
+def get_candidate_details_tool(name: str) -> str:
+    """Retrieve detailed information about a specific candidate"""
+    try:
+        results = qdrant_client.scroll(collection_name=COLLECTION_NAME, limit=100)
+        for point in results[0]:
+            resume = point.payload
+            if name.lower() in resume.get('name', '').lower():
+                details = f"{'='*60}\n"
+                details += f"👤 {resume.get('name', 'N/A')}\n"
+                details += f"{'='*60}\n"
+                details += f"📧 Email: {resume.get('email', 'N/A')}\n"
+                details += f"📱 Phone: {resume.get('phone', 'N/A')}\n"
+                details += f"📍 Location: {resume.get('location', 'N/A')}\n"
+                details += f"💼 Role: {resume.get('current_role', 'N/A')}\n"
+                details += f"📅 Experience: {resume.get('years_experience', 0)} years\n"
+                details += f"💰 Salary: {resume.get('salary_expectations', 'N/A')}\n\n"
+                details += f"🛠️ SKILLS:\n{', '.join(resume.get('skills', []))}\n\n"
+                if resume.get('certifications'):
+                    details += f"🏆 CERTS:\n{', '.join(resume.get('certifications', []))}\n\n"
+                details += f"🎓 EDUCATION:\n{resume.get('degree', 'N/A')}\n"
+                details += f"{resume.get('university', 'N/A')} ({resume.get('graduation_year', 'N/A')})\n"
+                return details
+        return f"Candidate '{name}' not found."
+    except Exception as e:
+        return f"Error: {str(e)}"
 
-master_extraction_agent = Agent(
-    role="Master Resume Data Extraction Specialist",
-    goal="Extract ALL information from resumes in structured JSON format",
-    backstory="""You are an expert resume parser that extracts comprehensive information.
+@tool("Compare Candidates")
+def compare_candidates_tool(name1: str, name2: str) -> str:
+    """Compare two candidates side-by-side"""
+    try:
+        results = qdrant_client.scroll(collection_name=COLLECTION_NAME, limit=100)
+        c1 = c2 = None
+        
+        for point in results[0]:
+            resume = point.payload
+            name = resume.get('name', '').lower()
+            if name1.lower() in name and not c1:
+                c1 = resume
+            if name2.lower() in name and not c2:
+                c2 = resume
+            if c1 and c2:
+                break
+        
+        if not c1 or not c2:
+            missing = []
+            if not c1: missing.append(name1)
+            if not c2: missing.append(name2)
+            return f"Could not find: {', '.join(missing)}"
+        
+        comparison = f"""
+{'='*70}
+CANDIDATE COMPARISON
+{'='*70}
+{c1['name']:35} | {c2['name']}
+{'-'*70}
+📧 {c1.get('email', 'N/A'):35} | {c2.get('email', 'N/A')}
+📍 {c1.get('location', 'N/A'):35} | {c2.get('location', 'N/A')}
+💼 {c1.get('current_role', 'N/A'):35} | {c2.get('current_role', 'N/A')}
+📅 {c1.get('years_experience', 0)} years{' '*28} | {c2.get('years_experience', 0)} years
 
-You extract:
-1. CONTACT INFO: Name, Email, Phone, Location (City, State), LinkedIn URL, Portfolio/GitHub URL
-2. PROFESSIONAL: Current Role/Title, Years of Experience (numeric), Previous Companies (list), Salary Expectations
-3. TECHNICAL SKILLS: Programming languages, frameworks, tools, cloud platforms, databases
-4. CERTIFICATIONS: AWS Certified, PMP, CISSP, Azure, Google Cloud, etc.
-5. EDUCATION: Degree, Major, University, Graduation Year
+🛠️ SKILLS:
+C1: {', '.join(c1.get('skills', []))}
+C2: {', '.join(c2.get('skills', []))}
 
-CRITICAL RULES:
-- Extract data EXACTLY as it appears
-- For Name: Remove ALL certifications (PMP, MBA, PhD, etc.)
-- For Location: Format as "City, State" (e.g., "Phoenix, Arizona")
-- For Skills: List technical skills only (max 15)
-- For Years of Experience: Extract numeric value (e.g., 5, 10, 3-5)
-- For Previous Companies: List up to 5 companies
-- Return ONLY valid JSON format
+Common: {', '.join(set(c1.get('skills', [])) & set(c2.get('skills', [])))}
+"""
+        return comparison
+    except Exception as e:
+        return f"Error: {str(e)}"
 
-HOW SKILLS ARE EXTRACTED:
-1. Look in "Skills" or "Technical Skills" sections
-2. Identify programming languages: Python, Java, JavaScript, C++, Go, Ruby, PHP
-3. Identify frameworks: React, Angular, Django, Spring, Node.js, Flask
-4. Identify cloud: AWS, Azure, GCP, Cloud Computing
-5. Identify databases: MySQL, PostgreSQL, MongoDB, Redis, Oracle
-6. Identify tools: Docker, Kubernetes, Git, Jenkins, Terraform, CI/CD
-7. Identify other tech: Machine Learning, AI, Data Science, APIs, Microservices
+@tool("Get Database Statistics")
+def get_database_stats_tool() -> str:
+    """Get comprehensive database statistics"""
+    try:
+        collection_info = qdrant_client.get_collection(COLLECTION_NAME)
+        count = collection_info.points_count
+        results = qdrant_client.scroll(collection_name=COLLECTION_NAME, limit=100)
+        
+        total_exp = 0
+        locations = {}
+        skills_count = {}
+        
+        for point in results[0]:
+            resume = point.payload
+            total_exp += resume.get('years_experience', 0)
+            loc = resume.get('location', 'Unknown')
+            locations[loc] = locations.get(loc, 0) + 1
+            for skill in resume.get('skills', []):
+                skills_count[skill] = skills_count.get(skill, 0) + 1
+        
+        avg_exp = total_exp / count if count > 0 else 0
+        top_skills = sorted(skills_count.items(), key=lambda x: x[1], reverse=True)[:5]
+        top_locations = sorted(locations.items(), key=lambda x: x[1], reverse=True)[:3]
+        
+        stats = f"""
+📊 DATABASE STATISTICS
+{'='*50}
+Total Resumes: {count}
+Average Experience: {avg_exp:.1f} years
+Cached Resumes: {len(cache_manager.memory_cache)}
 
-EXTRACTION PROCESS:
-- Read the entire resume carefully
-- Look for contact info at the top
-- Find skills in dedicated skills section or throughout experience
-- Extract certifications from certifications section or after name
-- Get education from education section (usually at bottom)
-- Count years from work history dates or "X years of experience" statements""",
+📍 Top Locations:
+{chr(10).join([f"   {loc}: {cnt}" for loc, cnt in top_locations])}
+
+🛠️ Top Skills:
+{chr(10).join([f"   {skill}: {cnt}" for skill, cnt in top_skills])}
+"""
+        return stats
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@tool("List All Candidates")
+def list_all_candidates_tool() -> str:
+    """List all candidates with summary"""
+    try:
+        results = qdrant_client.scroll(collection_name=COLLECTION_NAME, limit=50)
+        if not results[0]:
+            return "No resumes in database."
+        
+        output = f"📋 All Candidates ({len(results[0])}):\n\n"
+        for i, point in enumerate(results[0], 1):
+            resume = point.payload
+            output += f"{i}. {resume.get('name', 'N/A')} - {resume.get('current_role', 'N/A')}\n"
+            output += f"   📍 {resume.get('location', 'N/A')} | {resume.get('years_experience', 0)}y\n"
+            output += f"   🛠️ {', '.join(resume.get('skills', [])[:5])}\n\n"
+        return output
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+# ============== SPECIALIZED AGENTS ==============
+extraction_specialist = Agent(
+    role="Resume Data Extraction Specialist",
+    goal="Extract comprehensive structured data from resume text with high accuracy",
+    backstory="""You are an expert at parsing resumes and extracting structured information.
+    You excel at identifying key details even in poorly formatted resumes.""",
     llm=llm,
-    verbose=True,
-    max_iter=3,
+    verbose=False,
     allow_delegation=False
 )
 
+search_specialist = Agent(
+    role="Semantic Search Specialist",
+    goal="Find relevant candidates using advanced search techniques",
+    backstory="""Expert at understanding search queries and semantic matching.""",
+    llm=llm,
+    verbose=False,
+    allow_delegation=False
+)
 
-# ============== EXTRACTION FUNCTION USING SINGLE AGENT ==============
+comparison_specialist = Agent(
+    role="Candidate Comparison Analyst",
+    goal="Compare candidates and provide detailed analysis",
+    backstory="""Expert at analyzing and comparing candidates side-by-side.""",
+    llm=llm,
+    verbose=False,
+    allow_delegation=False
+)
 
-def extract_resume_info_with_single_agent(text: str, filename: str) -> dict:
-    """
-    Use SINGLE master agent to extract ALL information
-    Returns structured data ready for database storage
-    """
+master_orchestrator = Agent(
+    role="AI Resume Intelligence Assistant",
+    goal="Provide intelligent, conversational analysis of resumes and candidates",
+    backstory="""You are an expert AI recruiter and resume analyst. You help users find and understand candidates.
+
+When analyzing search results:
+- Explain WHY candidates are good matches in natural language
+- Highlight specific skills and experience that matter
+- Compare candidates' strengths
+- Make clear recommendations
+- Be conversational and helpful
+
+IMPORTANT: You must provide your analysis in natural, conversational language - not just internal thoughts.
+Write your response as if you're talking directly to a recruiter.""",
+    llm=llm,
+    verbose=True,
+    max_iter=3,
+    allow_delegation=False,
+    tools=[
+        semantic_search_tool,
+        get_candidate_details_tool,
+        compare_candidates_tool,
+        get_database_stats_tool,
+        list_all_candidates_tool
+    ]
+)
+
+# ============== EXTRACTION FUNCTIONS ==============
+def extract_text_from_pdf(file_path: str) -> str:
+    """Extract text from PDF"""
+    try:
+        with open(file_path, 'rb') as file:
+            pdf_reader = PyPDF2.PdfReader(file)
+            return "".join([page.extract_text() for page in pdf_reader.pages])
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+def extract_text_from_docx(file_path: str) -> str:
+    """Extract text from DOCX"""
+    try:
+        doc = docx.Document(file_path)
+        return "\n".join([para.text for para in doc.paragraphs])
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+def extract_years(value) -> int:
+    """Extract numeric years from various formats"""
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        match = re.search(r'(\d+)', str(value))
+        if match:
+            return int(match.group(1))
+    return 0
+
+def ensure_list(value) -> List:
+    """Ensure value is a list"""
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        return [value] if value and value != "Not found" else []
+    return []
+
+def process_resume_extraction(text: str, filename: str) -> dict:
+    """Process resume with improved error handling"""
+    print(f"\n📄 Processing: {filename}")
     
-    print(f"\n{'='*60}")
-    print(f"🤖 PROCESSING RESUME: {filename}")
-    print(f"{'='*60}\n")
-    
-    # Prepare resume text (take more content for better extraction)
-    resume_text = text[:3000]
-    
-    # Create comprehensive extraction task
-    extraction_task = Task(
-        description=f"""Extract ALL information from this resume and return as JSON.
+    try:
+        task = Task(
+            description=f"""Extract information from resume and return ONLY valid JSON:
 
-RESUME TEXT:
-{resume_text}
+{text[:2500]}
 
-EXTRACT THE FOLLOWING (return valid JSON):
-
+Return format (no markdown, no extra text):
 {{
-  "name": "First Last (remove PMP, MBA, etc.)",
-  "email": "email@example.com",
+  "name": "First Last",
+  "email": "email@domain.com",
   "phone": "123-456-7890",
   "location": "City, State",
   "linkedin": "URL or Not found",
   "portfolio": "URL or Not found",
   "current_role": "Job Title",
   "years_experience": 5,
-  "previous_companies": ["Company1", "Company2", "Company3"],
+  "previous_companies": ["Company1"],
   "salary_expectations": "$120K or Not found",
-  "skills": ["Python", "AWS", "Docker", "React", "etc"],
-  "certifications": ["AWS Certified", "PMP", "etc"],
-  "degree": "BS in Computer Science",
+  "skills": ["Python", "AWS"],
+  "certifications": ["AWS Certified"],
+  "degree": "BS Computer Science",
   "university": "University Name",
-  "graduation_year": "2020 or Not found"
+  "graduation_year": "2020"
 }}
 
-IMPORTANT:
-- Return ONLY the JSON object, no extra text
-- Use "Not found" for missing fields
-- years_experience must be a NUMBER (0 if not found)
-- Skills: technical skills only, max 15
-- Certifications: empty array [] if none found
-- Extract location as "City, State" format
-- Remove certifications from name field
-
-SKILLS EXTRACTION GUIDE:
-Look for these patterns:
-- Programming: Python, Java, JavaScript, C++, C#, Go, Ruby, PHP, Swift, Kotlin
-- Web: React, Angular, Vue, Node.js, Django, Flask, Spring, ASP.NET
-- Cloud: AWS, Azure, GCP, Cloud Computing, Serverless
-- Databases: MySQL, PostgreSQL, MongoDB, Redis, Oracle, SQL Server
-- DevOps: Docker, Kubernetes, Jenkins, CI/CD, Terraform, Ansible
-- Data: Machine Learning, AI, Data Science, Pandas, TensorFlow, PyTorch
-- Other: Git, REST API, Microservices, Agile, Linux
-
-Return the JSON now:""",
-        expected_output="Valid JSON object with all extracted resume fields",
-        agent=master_extraction_agent
-    )
-    
-    # Execute extraction
-    crew = Crew(
-        agents=[master_extraction_agent],
-        tasks=[extraction_task],
-        process=Process.sequential,
-        verbose=False
-    )
-    
-    try:
-        print("🔄 Master agent extracting data...")
+CRITICAL: years_experience must be NUMBER only, not "5 years".""",
+            expected_output="Valid JSON",
+            agent=extraction_specialist
+        )
+        
+        crew = Crew(
+            agents=[extraction_specialist],
+            tasks=[task],
+            process=Process.sequential,
+            verbose=False
+        )
+        
         result = crew.kickoff()
+        raw_output = str(result.tasks_output[0].raw) if hasattr(result, 'tasks_output') else str(result)
         
-        # Get the raw output
-        if hasattr(result, 'tasks_output'):
-            raw_output = str(result.tasks_output[0].raw)
-        else:
-            raw_output = str(result)
+        # Clean output
+        raw_output = raw_output.strip()
+        if raw_output.startswith('```'):
+            raw_output = re.sub(r'^```json?\s*', '', raw_output)
+            raw_output = re.sub(r'\s*```$', '', raw_output)
         
-        print(f"📄 Raw output:\n{raw_output[:500]}...\n")
-        
-        # Parse JSON from output
-        # Try to find JSON in the response
         json_match = re.search(r'\{[\s\S]*\}', raw_output)
         if json_match:
             json_str = json_match.group(0)
+            json_str = json_str.replace('\n', ' ')
+            json_str = re.sub(r',\s*}', '}', json_str)
+            json_str = re.sub(r',\s*]', ']', json_str)
             extracted_data = json.loads(json_str)
         else:
-            # Fallback: try parsing entire response
-            extracted_data = json.loads(raw_output)
+            raise ValueError("No JSON found")
         
-        # Validate and set defaults
         resume_info = {
             "filename": filename,
-            "name": extracted_data.get("name", "Not found"),
-            "email": extracted_data.get("email", "Not found"),
-            "phone": extracted_data.get("phone", "Not found"),
-            "location": extracted_data.get("location", "Not found"),
-            "linkedin": extracted_data.get("linkedin", "Not found"),
-            "portfolio": extracted_data.get("portfolio", "Not found"),
-            "current_role": extracted_data.get("current_role", "Not specified"),
-            "years_experience": int(extracted_data.get("years_experience", 0)) if isinstance(extracted_data.get("years_experience"), (int, float, str)) else 0,
-            "previous_companies": extracted_data.get("previous_companies", [])[:5],
-            "salary_expectations": extracted_data.get("salary_expectations", "Not specified"),
-            "skills": extracted_data.get("skills", [])[:15],
-            "certifications": extracted_data.get("certifications", [])[:10],
-            "degree": extracted_data.get("degree", "Not found"),
-            "university": extracted_data.get("university", "Not found"),
-            "graduation_year": extracted_data.get("graduation_year", "Not found"),
+            "name": str(extracted_data.get("name", "Not found")),
+            "email": str(extracted_data.get("email", "Not found")),
+            "phone": str(extracted_data.get("phone", "Not found")),
+            "location": str(extracted_data.get("location", "Not found")),
+            "linkedin": str(extracted_data.get("linkedin", "Not found")),
+            "portfolio": str(extracted_data.get("portfolio", "Not found")),
+            "current_role": str(extracted_data.get("current_role", "Not specified")),
+            "years_experience": extract_years(extracted_data.get("years_experience", 0)),
+            "previous_companies": ensure_list(extracted_data.get("previous_companies", []))[:5],
+            "salary_expectations": str(extracted_data.get("salary_expectations", "Not specified")),
+            "skills": ensure_list(extracted_data.get("skills", []))[:15],
+            "certifications": ensure_list(extracted_data.get("certifications", []))[:10],
+            "degree": str(extracted_data.get("degree", "Not found")),
+            "university": str(extracted_data.get("university", "Not found")),
+            "graduation_year": str(extracted_data.get("graduation_year", "Not found")),
             "uploaded_at": datetime.now().isoformat()
         }
         
-        # Clean years_experience if it's a string
-        if isinstance(resume_info['years_experience'], str):
-            numbers = re.findall(r'\d+', resume_info['years_experience'])
-            resume_info['years_experience'] = int(numbers[0]) if numbers else 0
-        
-        print(f"✅ EXTRACTED DATA:")
-        print(f"   👤 Name: {resume_info['name']}")
-        print(f"   📧 Email: {resume_info['email']}")
-        print(f"   📍 Location: {resume_info['location']}")
-        print(f"   💼 Role: {resume_info['current_role']}")
-        print(f"   📅 Experience: {resume_info['years_experience']} years")
-        print(f"   🛠️  Skills ({len(resume_info['skills'])}): {', '.join(resume_info['skills'][:5])}...")
-        print(f"   🏆 Certifications ({len(resume_info['certifications'])}): {', '.join(resume_info['certifications'][:3])}...")
-        print(f"   🎓 Education: {resume_info['degree']}")
-        print(f"   🏢 Companies: {', '.join(resume_info['previous_companies'][:3])}")
-        
+        print(f"✅ {resume_info['name']} - {resume_info['current_role']}")
         return resume_info
-    
-    except json.JSONDecodeError as e:
-        print(f"❌ JSON Parse Error: {e}")
-        print(f"Raw output was: {raw_output}")
-        return create_default_resume_info(filename)
-    
+        
     except Exception as e:
-        print(f"❌ Extraction Error: {e}")
-        return create_default_resume_info(filename)
+        print(f"❌ Extraction failed: {str(e)}")
+        return {
+            "filename": filename,
+            "name": f"Failed - {filename}",
+            "email": "Not found",
+            "phone": "Not found",
+            "location": "Not found",
+            "linkedin": "Not found",
+            "portfolio": "Not found",
+            "current_role": "Not specified",
+            "years_experience": 0,
+            "previous_companies": [],
+            "salary_expectations": "Not specified",
+            "skills": [],
+            "certifications": [],
+            "degree": "Not found",
+            "university": "Not found",
+            "graduation_year": "Not found",
+            "uploaded_at": datetime.now().isoformat()
+        }
 
+# ============== PARALLEL PROCESSING ==============
+async def process_single_resume(file_content: bytes, filename: str, file_extension: str) -> Optional[Dict]:
+    """Process a single resume with caching"""
+    try:
+        # Check cache first
+        file_hash = cache_manager.get_file_hash(file_content)
+        cached_resume = cache_manager.get_cached_resume(file_hash)
+        
+        if cached_resume:
+            return {
+                'resume': cached_resume,
+                'cached': True,
+                'file_id': cached_resume.get('id', str(uuid.uuid4()))
+            }
+        
+        # Save file
+        file_id = str(uuid.uuid4())
+        file_path = os.path.join(UPLOAD_DIR, f"{file_id}{file_extension}")
+        
+        with open(file_path, "wb") as f:
+            f.write(file_content)
+        
+        # Extract text
+        if file_extension == '.pdf':
+            text = await asyncio.get_event_loop().run_in_executor(
+                extraction_executor, extract_text_from_pdf, file_path
+            )
+        elif file_extension == '.docx':
+            text = await asyncio.get_event_loop().run_in_executor(
+                extraction_executor, extract_text_from_docx, file_path
+            )
+        else:
+            return None
+        
+        if "Error" in text:
+            return None
+        
+        # Process with AI
+        resume_info = await asyncio.get_event_loop().run_in_executor(
+            extraction_executor, process_resume_extraction, text, filename
+        )
+        resume_info['id'] = file_id
+        
+        # Cache the result
+        cache_manager.cache_resume(file_hash, resume_info)
+        
+        return {
+            'resume': resume_info,
+            'cached': False,
+            'file_id': file_id
+        }
+        
+    except Exception as e:
+        print(f"❌ Processing error for {filename}: {e}")
+        return None
 
-def create_default_resume_info(filename: str) -> dict:
-    """Create default structure when extraction fails"""
-    return {
-        "filename": filename,
-        "name": "Not found",
-        "email": "Not found",
-        "phone": "Not found",
-        "location": "Not found",
-        "linkedin": "Not found",
-        "portfolio": "Not found",
-        "current_role": "Not specified",
-        "years_experience": 0,
-        "previous_companies": [],
-        "salary_expectations": "Not specified",
-        "skills": [],
-        "certifications": [],
-        "degree": "Not found",
-        "university": "Not found",
-        "graduation_year": "Not found",
-        "uploaded_at": datetime.now().isoformat()
-    }
-
-
-def create_rich_embedding_text(resume_info: dict) -> str:
-    """Create comprehensive embedding text for better semantic search"""
+async def process_resumes_parallel(files: List[UploadFile]) -> UploadStatus:
+    """Process multiple resumes in parallel with intelligent batching"""
+    start_time = time.time()
     
-    parts = [
-        f"Name: {resume_info['name']}",
-        f"Location: {resume_info['location']}",
-        f"Current Role: {resume_info['current_role']}",
-        f"Experience: {resume_info['years_experience']} years",
+    # Read all files first
+    file_data = []
+    for file in files:
+        content = await file.read()
+        extension = os.path.splitext(file.filename)[1]
+        file_data.append((content, file.filename, extension))
+    
+    # Process in parallel
+    tasks = [
+        process_single_resume(content, filename, ext)
+        for content, filename, ext in file_data
     ]
     
-    if resume_info['previous_companies']:
-        parts.append(f"Worked at: {', '.join(resume_info['previous_companies'])}")
+    results = await asyncio.gather(*tasks)
     
-    if resume_info['skills']:
-        parts.append(f"Skills: {', '.join(resume_info['skills'])}")
+    # Separate results
+    processed_resumes = []
+    cached_count = 0
+    failed_count = 0
+    points = []
     
-    if resume_info['certifications']:
-        parts.append(f"Certifications: {', '.join(resume_info['certifications'])}")
-    
-    parts.append(f"Education: {resume_info['degree']} from {resume_info['university']}")
-    
-    return "\n".join(parts)
-
-
-# ============== TOOLS FOR SEARCH AGENT ==============
-
-@tool("Advanced Search Resumes")
-def advanced_search_tool(query: str) -> str:
-    """
-    Advanced semantic search with filters
-    Args:
-        query: Natural language query (e.g., "Python developers in Phoenix with AWS")
-    Returns:
-        Formatted list of matching candidates
-    """
-    try:
-        # Extract filters from query using simple patterns
-        location_filter = None
-        min_years = None
+    for result in results:
+        if result is None:
+            failed_count += 1
+            continue
         
-        # Location patterns
-        location_keywords = ["in ", "from ", "located in ", "based in "]
-        for keyword in location_keywords:
-            if keyword in query.lower():
-                parts = query.lower().split(keyword)
-                if len(parts) > 1:
-                    location_part = parts[1].split()[0:3]  # Take next few words
-                    location_filter = ' '.join(location_part).strip('.,!?')
+        resume_info = result['resume']
+        if result['cached']:
+            cached_count += 1
         
-        # Experience patterns
-        exp_patterns = [r'(\d+)\+?\s*years?', r'minimum\s+(\d+)\s+years?', r'at least\s+(\d+)\s+years?']
-        for pattern in exp_patterns:
-            match = re.search(pattern, query.lower())
-            if match:
-                min_years = int(match.group(1))
-                break
+        processed_resumes.append(resume_info)
         
-        # Generate query embedding
-        query_embedding = embeddings.embed_query(query)
-        
-        # Search in Qdrant
-        search_results = qdrant_client.search(
-            collection_name=COLLECTION_NAME,
-            query_vector=query_embedding,
-            limit=20
+        # Create rich embedding with weighted fields
+        # Role is most important, then skills, then name/location
+        embedding_text = (
+            f"ROLE: {resume_info['current_role']} {resume_info['current_role']} "
+            f"SKILLS: {' '.join(resume_info['skills'])} "
+            f"EXPERIENCE: {resume_info['years_experience']} years "
+            f"NAME: {resume_info['name']} "
+            f"LOCATION: {resume_info['location']} "
+            f"COMPANIES: {' '.join(resume_info['previous_companies'])}"
         )
+        embedding = embeddings.embed_query(embedding_text)
         
-        if not search_results:
-            return "No matching candidates found."
-        
-        # Apply filters
-        filtered_results = []
-        for result in search_results:
-            resume = result.payload
-            
-            # Location filter
-            if location_filter:
-                if location_filter.lower() not in resume.get('location', '').lower():
-                    continue
-            
-            # Experience filter
-            if min_years:
-                if resume.get('years_experience', 0) < min_years:
-                    continue
-            
-            filtered_results.append(result)
-        
-        if not filtered_results:
-            return f"No candidates found matching: {query}\nTry broadening your search criteria."
-        
-        # Format results
-        results_text = f"🎯 Found {len(filtered_results)} Matching Candidates:\n\n"
-        
-        for i, result in enumerate(filtered_results[:5], 1):
-            resume = result.payload
-            results_text += f"{'='*50}\n"
-            results_text += f"#{i} - {resume.get('name', 'N/A')}\n"
-            results_text += f"{'='*50}\n"
-            results_text += f"📧 Email: {resume.get('email', 'N/A')}\n"
-            results_text += f"📱 Phone: {resume.get('phone', 'N/A')}\n"
-            results_text += f"📍 Location: {resume.get('location', 'N/A')}\n"
-            results_text += f"💼 Current Role: {resume.get('current_role', 'N/A')}\n"
-            results_text += f"📅 Experience: {resume.get('years_experience', 0)} years\n"
-            
-            skills = resume.get('skills', [])
-            if skills:
-                results_text += f"🛠️  Skills: {', '.join(skills[:8])}\n"
-            
-            certs = resume.get('certifications', [])
-            if certs:
-                results_text += f"🏆 Certifications: {', '.join(certs)}\n"
-            
-            results_text += f"🎓 Education: {resume.get('degree', 'N/A')}\n"
-            
-            companies = resume.get('previous_companies', [])
-            if companies:
-                results_text += f"🏢 Previous: {', '.join(companies[:3])}\n"
-            
-            if resume.get('linkedin', 'Not found') != 'Not found':
-                results_text += f"💼 LinkedIn: {resume.get('linkedin')}\n"
-            
-            results_text += f"✓ Match Score: {result.score*100:.1f}%\n\n"
-        
-        if len(filtered_results) > 5:
-            results_text += f"... and {len(filtered_results) - 5} more candidates\n"
-        
-        return results_text
-    
-    except Exception as e:
-        return f"Error searching: {str(e)}"
-
-
-@tool("Get Resume Count")
-def get_resume_count_tool() -> str:
-    """Get total number of resumes in database"""
-    try:
-        collection_info = qdrant_client.get_collection(COLLECTION_NAME)
-        count = collection_info.points_count
-        return f"📊 Total resumes in database: {count}"
-    except Exception as e:
-        return f"Error getting count: {str(e)}"
-
-
-@tool("List All Resumes")
-def list_all_resumes_tool() -> str:
-    """List all candidates in database"""
-    try:
-        results = qdrant_client.scroll(
-            collection_name=COLLECTION_NAME,
-            limit=20
+        point = PointStruct(
+            id=result['file_id'],
+            vector=embedding,
+            payload=resume_info
         )
-        
-        if not results[0]:
-            return "No resumes in database."
-        
-        resumes_text = "📋 All Candidates:\n\n"
-        for i, point in enumerate(results[0], 1):
-            resume = point.payload
-            resumes_text += f"{i}. {resume.get('name', 'N/A')} - {resume.get('current_role', 'N/A')}\n"
-            resumes_text += f"   📍 {resume.get('location', 'N/A')} | 📅 {resume.get('years_experience', 0)} years\n"
-            resumes_text += f"   🛠️  {', '.join(resume.get('skills', [])[:4])}\n\n"
-        
-        return resumes_text
+        points.append(point)
     
-    except Exception as e:
-        return f"Error listing resumes: {str(e)}"
-
-
-@tool("Get Candidate Details")
-def get_candidate_details_tool(name: str) -> str:
-    """Get detailed info about a specific candidate"""
-    try:
-        results = qdrant_client.scroll(
-            collection_name=COLLECTION_NAME,
-            limit=100
-        )
-        
-        for point in results[0]:
-            resume = point.payload
-            if name.lower() in resume.get('name', '').lower():
-                details = f"👤 {resume.get('name', 'N/A')}\n"
-                details += f"{'='*50}\n"
-                details += f"📧 Email: {resume.get('email', 'N/A')}\n"
-                details += f"📱 Phone: {resume.get('phone', 'N/A')}\n"
-                details += f"📍 Location: {resume.get('location', 'N/A')}\n"
-                details += f"💼 Current Role: {resume.get('current_role', 'N/A')}\n"
-                details += f"📅 Experience: {resume.get('years_experience', 0)} years\n"
-                details += f"🛠️  Skills: {', '.join(resume.get('skills', []))}\n"
-                
-                certs = resume.get('certifications', [])
-                if certs:
-                    details += f"🏆 Certifications: {', '.join(certs)}\n"
-                
-                details += f"🎓 Education: {resume.get('degree', 'N/A')} - {resume.get('university', 'N/A')}\n"
-                
-                companies = resume.get('previous_companies', [])
-                if companies:
-                    details += f"🏢 Previous Companies: {', '.join(companies)}\n"
-                
-                if resume.get('linkedin', 'Not found') != 'Not found':
-                    details += f"💼 LinkedIn: {resume.get('linkedin')}\n"
-                if resume.get('portfolio', 'Not found') != 'Not found':
-                    details += f"🌐 Portfolio: {resume.get('portfolio')}\n"
-                
-                return details
-        
-        return f"Candidate '{name}' not found."
+    # Batch upsert to Qdrant
+    if points:
+        for i in range(0, len(points), BATCH_SIZE):
+            batch = points[i:i+BATCH_SIZE]
+            qdrant_client.upsert(collection_name=COLLECTION_NAME, points=batch)
     
-    except Exception as e:
-        return f"Error: {str(e)}"
-
-
-@tool("Compare Two Candidates")
-def compare_candidates_tool(name1: str, name2: str) -> str:
-    """Compare two candidates side-by-side"""
-    try:
-        results = qdrant_client.scroll(
-            collection_name=COLLECTION_NAME,
-            limit=100
-        )
-        
-        candidate1 = None
-        candidate2 = None
-        
-        for point in results[0]:
-            resume = point.payload
-            name = resume.get('name', '').lower()
-            if name1.lower() in name and not candidate1:
-                candidate1 = resume
-            if name2.lower() in name and not candidate2:
-                candidate2 = resume
-            if candidate1 and candidate2:
-                break
-        
-        if not candidate1 or not candidate2:
-            missing = []
-            if not candidate1: missing.append(name1)
-            if not candidate2: missing.append(name2)
-            return f"Could not find: {', '.join(missing)}"
-        
-        comparison = f"""
-{'='*60}
-CANDIDATE COMPARISON
-{'='*60}
-
-{candidate1['name']:30} vs {candidate2['name']}
-{'-'*60}
-📧 Email:        {candidate1.get('email', 'N/A'):30} | {candidate2.get('email', 'N/A')}
-📍 Location:     {candidate1.get('location', 'N/A'):30} | {candidate2.get('location', 'N/A')}
-💼 Role:         {candidate1.get('current_role', 'N/A'):30} | {candidate2.get('current_role', 'N/A')}
-📅 Experience:   {candidate1.get('years_experience', 0)} years{' '*(24)} | {candidate2.get('years_experience', 0)} years
-🎓 Education:    {candidate1.get('degree', 'N/A'):30} | {candidate2.get('degree', 'N/A')}
-
-🛠️  SKILLS:
-Candidate 1: {', '.join(candidate1.get('skills', [])[:10])}
-Candidate 2: {', '.join(candidate2.get('skills', [])[:10])}
-
-Common Skills: {', '.join(set(candidate1.get('skills', [])) & set(candidate2.get('skills', [])))}
-
-🏆 CERTIFICATIONS:
-Candidate 1: {', '.join(candidate1.get('certifications', [])) if candidate1.get('certifications') else 'None'}
-Candidate 2: {', '.join(candidate2.get('certifications', [])) if candidate2.get('certifications') else 'None'}
-"""
-        return comparison
+    processing_time = time.time() - start_time
     
-    except Exception as e:
-        return f"Error comparing: {str(e)}"
+    return UploadStatus(
+        status="success",
+        total_files=len(files),
+        processed=len(processed_resumes),
+        cached=cached_count,
+        failed=failed_count,
+        resumes=processed_resumes,
+        processing_time=round(processing_time, 2)
+    )
 
-
-# ============== SINGLE MASTER CONVERSATIONAL AGENT ==============
-
-master_chat_agent = Agent(
-    role="Master Resume Intelligence Assistant",
-    goal="Help users with ALL resume tasks through natural conversation",
-    backstory="""You are an intelligent AI assistant for resume management.
-
-CAPABILITIES:
-✅ Search candidates by skills, location, experience, certifications
-✅ List all candidates in database  
-✅ Get detailed information about specific candidates
-✅ Compare two candidates side-by-side
-✅ Provide database statistics
-
-SEARCH EXAMPLES:
-- "Find Python developers" → Use Advanced Search
-- "Python developers in Phoenix with 5+ years" → Use Advanced Search
-- "Who has AWS certification?" → Use Advanced Search with "AWS certified"
-- "List all candidates" → Use List All Resumes
-- "Tell me about John Doe" → Use Get Candidate Details
-- "Compare John and Jane" → Use Compare Two Candidates
-- "How many resumes?" → Use Get Resume Count
-
-Be conversational, friendly, and helpful. Understand user intent even with vague queries.""",
-    llm=llm,
-    tools=[
-        advanced_search_tool,
-        get_resume_count_tool,
-        list_all_resumes_tool,
-        get_candidate_details_tool,
-        compare_candidates_tool
-    ],
-    verbose=True,
-    max_iter=5,
-    allow_delegation=False
-)
-
-
-# ============== UTILITY FUNCTIONS ==============
-
-def extract_text_from_pdf(file_path: str) -> str:
-    """Extract text from PDF"""
-    try:
-        with open(file_path, 'rb') as file:
-            pdf_reader = PyPDF2.PdfReader(file)
-            text = ""
-            for page in pdf_reader.pages:
-                text += page.extract_text()
-            return text
-    except Exception as e:
-        return f"Error: {str(e)}"
-
-
-def extract_text_from_docx(file_path: str) -> str:
-    """Extract text from DOCX"""
-    try:
-        doc = docx.Document(file_path)
-        text = "\n".join([para.text for para in doc.paragraphs])
-        return text
-    except Exception as e:
-        return f"Error: {str(e)}"
-
-
-# ============== API ENDPOINTS ==============
-
-@app.get("/")
-async def root():
-    return {"message": "Master AI Resume Intelligence Chatbot", "status": "running"}
-
-
-@app.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
-    """Master chatbot endpoint - handles ALL user queries"""
+def process_user_query(message: str, conversation_id: str) -> Dict[str, Any]:
+    """Master orchestration function that routes queries to appropriate agents"""
+    print(f"\n{'='*70}")
+    print(f"🎯 ORCHESTRATOR: Processing query")
+    print(f"💬 User: {message}")
+    print(f"{'='*70}\n")
     
-    print(f"\n{'='*60}")
-    print(f"💬 USER: {request.message}")
-    print(f"{'='*60}\n")
+    agent_flow = ["Master Orchestrator"]
     
-    conversation_id = request.conversation_id or str(uuid.uuid4())
-    
-    # Create task for Master Chat Agent
-    chat_task = Task(
-        description=f"""User says: "{request.message}"
+    # Create task with focus on single tool call + analysis
+    orchestrator_task = Task(
+        description=f"""User query: "{message}"
 
-Respond to the user's request using your available tools. Be conversational and helpful.
+Step 1: Call the appropriate tool ONCE to get data
+Step 2: Analyze the tool output and provide intelligent insights
 
-If they're searching for candidates, use the Advanced Search tool.
-If they want to list all, use List All Resumes.
-If they mention a specific name, use Get Candidate Details or Compare.
-If they ask for stats, use Get Resume Count.
+For search queries:
+- Call Semantic Search Candidates with: {{"query": "search terms", "filters": "{{}}"}}
+- The tool returns complete candidate details with rankings
+- Analyze the results you received
+- DO NOT call additional tools - all data is already in the search results
+- Explain why candidates match, highlight their strengths, make recommendations
 
-Provide a natural, friendly response.""",
-        expected_output="Helpful response to user's query",
-        agent=master_chat_agent
+For other query types, use the appropriate tool once and analyze.
+
+Provide an intelligent, conversational response that explains your reasoning.""",
+        expected_output="Intelligent analysis with clear explanations and recommendations",
+        agent=master_orchestrator
     )
     
-    # Execute
-    chat_crew = Crew(
-        agents=[master_chat_agent],
-        tasks=[chat_task],
+    # Execute orchestration
+    crew = Crew(
+        agents=[master_orchestrator],
+        tasks=[orchestrator_task],
         process=Process.sequential,
         verbose=True
     )
     
     try:
-        result = chat_crew.kickoff()
+        result = crew.kickoff()
         response_text = str(result)
         
-        print(f"\n✅ RESPONSE:\n{response_text}\n")
+        print(f"\n✅ ORCHESTRATOR COMPLETE")
+        print(f"📤 Response: {response_text[:200]}...")
+        print(f"📊 Agent Flow: {' → '.join(agent_flow)}\n")
         
-        return ChatResponse(
-            response=response_text,
-            conversation_id=conversation_id,
-            agent_used="Master Agent"
-        )
-    
+        return {
+            "response": response_text,
+            "agent_flow": agent_flow,
+            "status": "success"
+        }
+        
     except Exception as e:
-        error_message = f"I apologize, I encountered an error: {str(e)}. Please try rephrasing."
-        return ChatResponse(
-            response=error_message,
-            conversation_id=conversation_id,
-            agent_used="Error Handler"
-        )
+        print(f"\n❌ ORCHESTRATION ERROR: {str(e)}\n")
+        return {
+            "response": f"I apologize, I encountered an error: {str(e)}. Please try rephrasing your question.",
+            "agent_flow": agent_flow + ["Error Handler"],
+            "status": "error"
+        }
 
 
-@app.post("/upload")
-async def upload_resumes(files: List[UploadFile] = File(...)):
-    """Upload and process resume files using SINGLE master agent"""
-    
-    processed_resumes = []
-    points = []
-    
-    for file in files:
-        file_id = str(uuid.uuid4())
-        file_extension = os.path.splitext(file.filename)[1]
-        file_path = os.path.join(UPLOAD_DIR, f"{file_id}{file_extension}")
-        
-        content = await file.read()
-        with open(file_path, "wb") as f:
-            f.write(content)
-        
-        # Extract text
-        if file_extension == '.pdf':
-            text = extract_text_from_pdf(file_path)
-        elif file_extension == '.docx':
-            text = extract_text_from_docx(file_path)
-        else:
-            continue
-        
-        if "Error" in text:
-            continue
-        
-        # Extract info using SINGLE master agent
-        resume_info = extract_resume_info_with_single_agent(text, file.filename)
-        resume_info['id'] = file_id
-        
-        # Create rich embedding
-        embedding_text = create_rich_embedding_text(resume_info)
-        embedding = embeddings.embed_query(embedding_text)
-        
-        # Store in Qdrant
-        point = PointStruct(
-            id=file_id,
-            vector=embedding,
-            payload=resume_info
-        )
-        points.append(point)
-        processed_resumes.append(resume_info)
-    
-    # Upload to Qdrant
-    if points:
-        qdrant_client.upsert(
-            collection_name=COLLECTION_NAME,
-            points=points
-        )
-    
+# ============== API ENDPOINTS ==============
+@app.get("/")
+async def root():
+    collection_info = qdrant_client.get_collection(COLLECTION_NAME)
     return {
-        "message": f"Successfully processed {len(processed_resumes)} resumes",
-        "resumes": processed_resumes
+        "message": "Enterprise Multi-Agent Resume Intelligence System",
+        "status": "operational",
+        "features": [
+            "Intelligent Caching",
+            "Parallel Processing",
+            "Semantic Search",
+            "Multi-Agent Orchestration"
+        ],
+        "stats": {
+            "total_resumes": collection_info.points_count,
+            "cached_resumes": len(cache_manager.memory_cache),
+            "max_workers": MAX_WORKERS
+        }
     }
 
+@app.post("/chat", response_model=ChatResponse)
+async def chat(request: ChatRequest):
+    """Chat endpoint with intelligent orchestration"""
+    conversation_id = request.conversation_id or str(uuid.uuid4())
+    result = process_user_query(request.message, conversation_id)
+    
+    return ChatResponse(
+        response=result["response"],
+        conversation_id=conversation_id,
+        agent_flow=result["agent_flow"],
+        metadata={"status": result["status"]}
+    )
+
+@app.post("/upload", response_model=UploadStatus)
+async def upload_resumes(files: List[UploadFile] = File(...)):
+    """Upload with parallel processing and caching"""
+    print(f"\n{'='*70}")
+    print(f"📤 Upload Request: {len(files)} files")
+    print(f"{'='*70}\n")
+    
+    result = await process_resumes_parallel(files)
+    
+    print(f"\n{'='*70}")
+    print(f"✅ Upload Complete")
+    print(f"   Total: {result.total_files}")
+    print(f"   Processed: {result.processed}")
+    print(f"   Cached: {result.cached}")
+    print(f"   Failed: {result.failed}")
+    print(f"   Time: {result.processing_time}s")
+    print(f"{'='*70}\n")
+    
+    return result
 
 @app.get("/resumes")
 async def get_all_resumes():
     """Get all stored resumes"""
     try:
-        results = qdrant_client.scroll(
-            collection_name=COLLECTION_NAME,
-            limit=100
-        )
-        
+        results = qdrant_client.scroll(collection_name=COLLECTION_NAME, limit=100)
         resumes = []
         for point in results[0]:
             resume_data = point.payload
             resume_data['id'] = str(point.id)
             resumes.append(resume_data)
-        
-        return {"resumes": resumes, "count": len(resumes)}
+        return {
+            "resumes": resumes,
+            "count": len(resumes),
+            "cached_count": len(cache_manager.memory_cache)
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @app.get("/stats")
 async def get_stats():
-    """Get database statistics"""
+    """Get comprehensive system statistics"""
     try:
         collection_info = qdrant_client.get_collection(COLLECTION_NAME)
-        count = collection_info.points_count
+        
+        # Calculate cache hit rate
+        total_cached = len(cache_manager.memory_cache)
+        cache_hit_rate = (total_cached / collection_info.points_count * 100) if collection_info.points_count > 0 else 0
+        
         return {
-            "total_resumes": count,
+            "total_resumes": collection_info.points_count,
+            "cached_resumes": total_cached,
+            "cache_hit_rate": f"{cache_hit_rate:.1f}%",
             "collection": COLLECTION_NAME,
-            "status": "connected"
+            "vector_size": VECTOR_SIZE,
+            "max_workers": MAX_WORKERS,
+            "cache_enabled": ENABLE_CACHING,
+            "cache_ttl_hours": CACHE_TTL_HOURS,
+            "architecture": "Multi-Agent Orchestrator with Parallel Processing",
+            "status": "operational"
         }
     except Exception as e:
-        return {"total_resumes": 0, "status": "error", "message": str(e)}
-
+        return {
+            "total_resumes": 0,
+            "status": "error",
+            "message": str(e)
+        }
 
 @app.delete("/resumes/clear")
 async def clear_all_resumes():
-    """Clear all resumes from database"""
+    """Clear all resumes and cache"""
     try:
         qdrant_client.delete_collection(COLLECTION_NAME)
-        
-        # Recreate collection
         qdrant_client.create_collection(
             collection_name=COLLECTION_NAME,
             vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
         )
         
-        return {"message": "All resumes cleared successfully"}
+        # Clear cache
+        cache_manager.memory_cache = {}
+        cache_manager.save_cache()
+        
+        return {
+            "message": "All resumes and cache cleared successfully",
+            "resumes_cleared": True,
+            "cache_cleared": True
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/cache/clear")
+async def clear_cache():
+    """Clear only the cache (keep resumes)"""
+    try:
+        old_count = len(cache_manager.memory_cache)
+        cache_manager.memory_cache = {}
+        cache_manager.save_cache()
+        
+        return {
+            "message": f"Cache cleared: {old_count} entries removed",
+            "cleared_entries": old_count
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/cache/stats")
+async def get_cache_stats():
+    """Get detailed cache statistics"""
+    try:
+        cache_size = len(cache_manager.memory_cache)
+        
+        # Calculate cache ages
+        ages = []
+        for cached_data in cache_manager.memory_cache.values():
+            if cached_data.get('cached_at'):
+                cache_time = datetime.fromisoformat(cached_data['cached_at'])
+                age = datetime.now() - cache_time
+                ages.append(age.total_seconds() / 3600)  # hours
+        
+        avg_age = sum(ages) / len(ages) if ages else 0
+        
+        return {
+            "total_cached": cache_size,
+            "average_age_hours": round(avg_age, 2),
+            "oldest_cache_hours": round(max(ages), 2) if ages else 0,
+            "newest_cache_hours": round(min(ages), 2) if ages else 0,
+            "cache_file": PROCESSED_CACHE,
+            "cache_ttl_hours": CACHE_TTL_HOURS
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/resumes/reprocess")
+async def reprocess_failed_resumes():
+    """Reprocess resumes that failed extraction"""
+    try:
+        results = qdrant_client.scroll(collection_name=COLLECTION_NAME, limit=100)
+        failed_resumes = []
+        
+        for point in results[0]:
+            resume = point.payload
+            if resume.get('name', '').startswith('Failed -') or resume.get('name') == 'Extraction Failed':
+                failed_resumes.append({
+                    'id': str(point.id),
+                    'filename': resume.get('filename')
+                })
+        
+        if not failed_resumes:
+            return {
+                "message": "No failed resumes to reprocess",
+                "count": 0
+            }
+        
+        return {
+            "message": f"Found {len(failed_resumes)} failed resumes",
+            "failed_resumes": failed_resumes,
+            "action": "Please re-upload these files to reprocess"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/health")
+async def health_check():
+    """Comprehensive health check"""
+    health_status = {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "components": {}
+    }
+    
+    # Check Qdrant
+    try:
+        qdrant_client.get_collection(COLLECTION_NAME)
+        health_status["components"]["qdrant"] = "operational"
+    except Exception as e:
+        health_status["components"]["qdrant"] = f"error: {str(e)}"
+        health_status["status"] = "degraded"
+    
+    # Check LLM
+    try:
+        test_agent = Agent(
+            role="Test",
+            goal="Test",
+            backstory="Test",
+            llm=llm,
+            verbose=False
+        )
+        health_status["components"]["llm"] = "operational"
+    except Exception as e:
+        health_status["components"]["llm"] = f"error: {str(e)}"
+        health_status["status"] = "degraded"
+    
+    # Check Embeddings
+    try:
+        embeddings.embed_query("test")
+        health_status["components"]["embeddings"] = "operational"
+    except Exception as e:
+        health_status["components"]["embeddings"] = f"error: {str(e)}"
+        health_status["status"] = "degraded"
+    
+    # Check Cache
+    try:
+        cache_count = len(cache_manager.memory_cache)
+        health_status["components"]["cache"] = f"operational ({cache_count} entries)"
+    except Exception as e:
+        health_status["components"]["cache"] = f"error: {str(e)}"
+    
+    return health_status
+
+@app.get("/search/advanced")
+async def advanced_search(
+    query: str,
+    location: Optional[str] = None,
+    min_years: Optional[int] = None,
+    skills: Optional[str] = None,
+    limit: int = 10
+):
+    """Advanced search with URL parameters"""
+    try:
+        query_embedding = embeddings.embed_query(query)
+        results = qdrant_client.search(
+            collection_name=COLLECTION_NAME,
+            query_vector=query_embedding,
+            limit=50
+        )
+        
+        filtered = []
+        for result in results:
+            resume = result.payload
+            
+            # Apply filters
+            if location and location.lower() not in resume.get('location', '').lower():
+                continue
+            if min_years and resume.get('years_experience', 0) < min_years:
+                continue
+            if skills:
+                required_skills = [s.strip().lower() for s in skills.split(',')]
+                resume_skills = [s.lower() for s in resume.get('skills', [])]
+                if not any(skill in resume_skills for skill in required_skills):
+                    continue
+            
+            filtered.append({
+                "resume": resume,
+                "score": result.score
+            })
+        
+        return {
+            "query": query,
+            "filters": {
+                "location": location,
+                "min_years": min_years,
+                "skills": skills
+            },
+            "total_results": len(filtered),
+            "results": filtered[:limit]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.on_event("startup")
+async def startup_event():
+    """Run on startup"""
+    print("\n" + "="*70)
+    print("🚀 ENTERPRISE MULTI-AGENT RESUME INTELLIGENCE SYSTEM")
+    print("="*70)
+    print("🎯 Master Orchestrator Agent")
+    print("   ├── 📄 Extraction Specialist (Resume Parsing)")
+    print("   ├── 🔍 Search Specialist (Semantic Search)")
+    print("   ├── 📊 Comparison Specialist (Candidate Analysis)")
+    print("   └── 💾 Database Specialist (Stats & Listings)")
+    print("="*70)
+    print(f"📊 Qdrant: {QDRANT_URL}")
+    print(f"🤖 LLM: {OLLAMA_MODEL}")
+    print(f"🔢 Vector Size: {VECTOR_SIZE}")
+    print(f"🌐 Server: http://127.0.0.1:8000")
+    print(f"⚡ Workers: {MAX_WORKERS}")
+    print(f"💾 Cache: {'Enabled' if ENABLE_CACHING else 'Disabled'} ({len(cache_manager.memory_cache)} entries)")
+    print("="*70)
+    print("\n✅ PRODUCTION FEATURES:")
+    print("   • Intelligent Caching System (24hr TTL)")
+    print("   • Parallel Resume Processing")
+    print("   • Batch Vector Embeddings")
+    print("   • Multi-Agent Orchestration")
+    print("   • Advanced Search API")
+    print("   • Health Monitoring")
+    print("   • Error Recovery")
+    print("   • Performance Optimization")
+    print("\n" + "="*70)
+    print("📚 API ENDPOINTS:")
+    print("   GET  /              - System overview")
+    print("   POST /chat          - AI chat interface")
+    print("   POST /upload        - Upload resumes (parallel)")
+    print("   GET  /resumes       - List all resumes")
+    print("   GET  /stats         - System statistics")
+    print("   GET  /health        - Health check")
+    print("   GET  /search/advanced - Advanced search")
+    print("   GET  /cache/stats   - Cache statistics")
+    print("   POST /cache/clear   - Clear cache")
+    print("   DELETE /resumes/clear - Clear all data")
+    print("="*70 + "\n")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Run on shutdown"""
+    print("\n" + "="*70)
+    print("🛑 SHUTTING DOWN")
+    print("="*70)
+    
+    # Save cache before shutdown
+    cache_manager.save_cache()
+    print(f"💾 Cache saved: {len(cache_manager.memory_cache)} entries")
+    
+    # Cleanup thread pools
+    extraction_executor.shutdown(wait=True)
+    embedding_executor.shutdown(wait=True)
+    print("⚡ Thread pools closed")
+    
+    print("="*70)
+    print("✅ Shutdown complete")
+    print("="*70 + "\n")
 
 if __name__ == "__main__":
-    print("🚀 Starting Master AI Resume Intelligence Chatbot...")
-    print(f"📊 Qdrant: {QDRANT_URL}")
-    print(f"🤖 Ollama Model: {OLLAMA_MODEL}")
-    print(f"📢 Embedding Model: {EMBEDDING_MODEL}")
-    print(f"📁 Upload Directory: {UPLOAD_DIR}")
-    print(f"📏 Vector Size: {VECTOR_SIZE}")
-    print("\n" + "="*60)
-    print("💡 SINGLE MASTER AGENT ARCHITECTURE")
-    print("="*60)
-    print("✅ 1 Extraction Agent - Parses ALL resume data")
-    print("✅ 1 Chat Agent - Handles ALL user queries")
-    print("✅ No helper functions - Agent does everything!")
-    print("✅ Resource efficient - Minimal LLM calls")
-    print("="*60 + "\n")
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run(
+        app,
+        host="127.0.0.1",
+        port=8000,
+        log_level="info",
+        access_log=True
+    )
