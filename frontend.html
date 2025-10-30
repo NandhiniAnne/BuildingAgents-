@@ -3,364 +3,439 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Enterprise AI Resume Intelligence</title>
+    <title>LangGraph Multi-Agent Resume Intelligence</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
+        
         body { 
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 50%, #7e22ce 100%);
             min-height: 100vh;
             display: flex;
             justify-content: center;
             align-items: center;
             padding: 20px;
         }
+        
         .container { 
-            max-width: 1100px; 
+            max-width: 1200px; 
             width: 100%;
             background: white;
-            border-radius: 20px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            border-radius: 24px;
+            box-shadow: 0 25px 70px rgba(0,0,0,0.4);
             overflow: hidden;
             display: flex;
             flex-direction: column;
-            height: 90vh;
+            height: 92vh;
         }
+        
         .header { 
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 50%, #7e22ce 100%);
             color: white;
-            padding: 20px 30px;
+            padding: 24px 30px;
         }
+        
         .header h1 { 
-            font-size: 24px;
+            font-size: 26px;
             margin-bottom: 8px;
             display: flex;
             align-items: center;
-            gap: 10px;
+            gap: 12px;
         }
-        .header p {
-            opacity: 0.9;
-            font-size: 13px;
+        
+        .header .subtitle {
+            opacity: 0.95;
+            font-size: 14px;
+            margin-bottom: 16px;
         }
-        .stats-bar {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-            gap: 10px;
-            background: rgba(255,255,255,0.1);
-            padding: 15px;
-            margin-top: 15px;
-            border-radius: 10px;
-        }
-        .stat-item {
-            text-align: center;
-            padding: 8px;
-        }
-        .stat-value {
-            font-size: 20px;
-            font-weight: bold;
+        
+        .agent-flow {
             display: flex;
             align-items: center;
-            justify-content: center;
-            gap: 5px;
-        }
-        .stat-label {
-            font-size: 11px;
-            opacity: 0.8;
-            margin-top: 4px;
-        }
-        .badge {
-            display: inline-block;
-            padding: 2px 8px;
+            gap: 8px;
+            padding: 12px 16px;
+            background: rgba(255,255,255,0.12);
             border-radius: 12px;
-            font-size: 10px;
-            background: rgba(255,255,255,0.2);
-            margin-left: 8px;
+            font-size: 12px;
+            margin-bottom: 12px;
+            flex-wrap: wrap;
         }
+        
+        .agent-badge {
+            padding: 6px 12px;
+            background: rgba(255,255,255,0.2);
+            border-radius: 16px;
+            font-size: 11px;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            animation: fadeIn 0.4s ease-in;
+        }
+        
+        .agent-badge.active {
+            background: rgba(34, 197, 94, 0.3);
+            animation: pulse 1.5s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+        
+        .arrow {
+            opacity: 0.6;
+            font-size: 14px;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+            gap: 10px;
+        }
+        
+        .stat-card {
+            background: rgba(255,255,255,0.1);
+            padding: 12px;
+            border-radius: 10px;
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-size: 22px;
+            font-weight: bold;
+            margin-bottom: 4px;
+        }
+        
+        .stat-label {
+            font-size: 10px;
+            opacity: 0.85;
+        }
+        
         .chat-container {
             flex: 1;
             display: flex;
             flex-direction: column;
             overflow: hidden;
         }
+        
         .messages {
             flex: 1;
             overflow-y: auto;
-            padding: 25px;
-            background: #f8f9fa;
+            padding: 28px;
+            background: #f8fafc;
         }
+        
         .message {
-            margin-bottom: 18px;
+            margin-bottom: 20px;
             display: flex;
-            animation: fadeIn 0.3s ease-in;
+            animation: slideIn 0.3s ease-out;
         }
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
+        
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(15px); }
             to { opacity: 1; transform: translateY(0); }
         }
+        
         .message.user {
             justify-content: flex-end;
         }
-        .message-content {
-            max-width: 70%;
-            padding: 14px 18px;
-            border-radius: 16px;
-            line-height: 1.5;
-            white-space: pre-wrap;
-            font-size: 14px;
+        
+        .message-wrapper {
+            display: flex;
+            gap: 12px;
+            max-width: 75%;
+            align-items: flex-start;
         }
-        .message.user .message-content {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border-bottom-right-radius: 5px;
+        
+        .message.user .message-wrapper {
+            flex-direction: row-reverse;
         }
-        .message.bot .message-content {
-            background: white;
-            color: #333;
-            border: 1px solid #e5e7eb;
-            border-bottom-left-radius: 5px;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
-        }
-        .message-avatar {
-            width: 36px;
-            height: 36px;
+        
+        .avatar {
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 18px;
-            margin: 0 10px;
+            font-size: 20px;
             flex-shrink: 0;
         }
-        .message.user .message-avatar {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        
+        .message.user .avatar {
+            background: linear-gradient(135deg, #7e22ce, #2a5298);
+        }
+        
+        .message.bot .avatar {
+            background: linear-gradient(135deg, #10b981, #059669);
+        }
+        
+        .message-content {
+            padding: 16px 20px;
+            border-radius: 18px;
+            line-height: 1.6;
+            white-space: pre-wrap;
+            font-size: 14px;
+            position: relative;
+        }
+        
+        .message.user .message-content {
+            background: linear-gradient(135deg, #7e22ce, #2a5298);
             color: white;
+            border-bottom-right-radius: 6px;
         }
-        .message.bot .message-avatar {
-            background: #f3f4f6;
+        
+        .message.bot .message-content {
+            background: white;
+            color: #1e293b;
+            border: 1px solid #e2e8f0;
+            border-bottom-left-radius: 6px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
         }
+        
+        .execution-details {
+            margin-top: 12px;
+            padding: 12px;
+            background: #f1f5f9;
+            border-radius: 10px;
+            font-size: 12px;
+            border-left: 3px solid #7e22ce;
+        }
+        
+        .execution-details-title {
+            font-weight: bold;
+            color: #7e22ce;
+            margin-bottom: 6px;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .execution-metric {
+            display: flex;
+            justify-content: space-between;
+            padding: 4px 0;
+            color: #475569;
+        }
+        
+        .execution-log {
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid #cbd5e1;
+            max-height: 120px;
+            overflow-y: auto;
+        }
+        
+        .log-entry {
+            padding: 3px 0;
+            font-size: 11px;
+            color: #64748b;
+        }
+        
         .typing-indicator {
             display: none;
-            padding: 12px 18px;
+            padding: 14px 20px;
             background: white;
-            border-radius: 16px;
-            border-bottom-left-radius: 5px;
-            max-width: 70px;
-            border: 1px solid #e5e7eb;
-            margin-left: 46px;
+            border-radius: 18px;
+            border-bottom-left-radius: 6px;
+            max-width: 80px;
+            border: 1px solid #e2e8f0;
+            margin-left: 52px;
         }
+        
         .typing-indicator.active {
             display: inline-block;
         }
+        
         .typing-indicator span {
-            height: 8px;
-            width: 8px;
-            background: #667eea;
+            height: 9px;
+            width: 9px;
+            background: #10b981;
             border-radius: 50%;
             display: inline-block;
-            margin-right: 4px;
+            margin-right: 5px;
             animation: typing 1.4s infinite;
         }
+        
         .typing-indicator span:nth-child(2) {
             animation-delay: 0.2s;
         }
+        
         .typing-indicator span:nth-child(3) {
             animation-delay: 0.4s;
         }
+        
         @keyframes typing {
-            0%, 60%, 100% { transform: translateY(0); }
-            30% { transform: translateY(-8px); }
+            0%, 60%, 100% { transform: translateY(0); opacity: 0.7; }
+            30% { transform: translateY(-10px); opacity: 1; }
         }
+        
         .input-area {
-            padding: 18px 25px;
+            padding: 20px 28px;
             background: white;
-            border-top: 1px solid #e5e7eb;
+            border-top: 1px solid #e2e8f0;
         }
+        
         .quick-actions {
             display: flex;
-            gap: 6px;
-            margin-bottom: 12px;
+            gap: 8px;
+            margin-bottom: 14px;
             flex-wrap: wrap;
         }
+        
         .quick-action {
-            padding: 6px 12px;
-            background: #f3f4f6;
-            border: none;
-            border-radius: 16px;
+            padding: 8px 16px;
+            background: #f1f5f9;
+            border: 1px solid #e2e8f0;
+            border-radius: 20px;
             cursor: pointer;
-            font-size: 12px;
-            transition: all 0.2s;
+            font-size: 13px;
+            transition: all 0.25s;
+            font-weight: 500;
         }
+        
         .quick-action:hover {
-            background: #667eea;
+            background: linear-gradient(135deg, #7e22ce, #2a5298);
             color: white;
-            transform: translateY(-1px);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(126, 34, 206, 0.3);
         }
+        
         .input-form {
             display: flex;
-            gap: 8px;
+            gap: 10px;
         }
+        
         .input-form input {
             flex: 1;
-            padding: 12px 18px;
-            border: 2px solid #e5e7eb;
-            border-radius: 22px;
+            padding: 14px 20px;
+            border: 2px solid #e2e8f0;
+            border-radius: 24px;
             font-size: 14px;
             outline: none;
-            transition: border-color 0.3s;
+            transition: all 0.3s;
         }
+        
         .input-form input:focus {
-            border-color: #667eea;
+            border-color: #7e22ce;
+            box-shadow: 0 0 0 3px rgba(126, 34, 206, 0.1);
         }
+        
         .send-btn {
-            padding: 12px 24px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 14px 28px;
+            background: linear-gradient(135deg, #7e22ce, #2a5298);
             color: white;
             border: none;
-            border-radius: 22px;
+            border-radius: 24px;
             cursor: pointer;
-            font-weight: bold;
+            font-weight: 600;
             font-size: 14px;
-            transition: transform 0.2s;
+            transition: all 0.25s;
+            box-shadow: 0 4px 12px rgba(126, 34, 206, 0.3);
         }
+        
         .send-btn:hover {
-            transform: scale(1.05);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(126, 34, 206, 0.4);
         }
+        
         .send-btn:disabled {
             opacity: 0.5;
             cursor: not-allowed;
+            transform: none;
         }
-        .welcome-message {
+        
+        .welcome {
             text-align: center;
-            padding: 40px 25px;
-            color: #6b7280;
+            padding: 50px 30px;
+            color: #64748b;
         }
-        .welcome-message h2 {
-            color: #667eea;
-            margin-bottom: 12px;
-            font-size: 22px;
+        
+        .welcome h2 {
+            color: #1e3c72;
+            margin-bottom: 16px;
+            font-size: 24px;
         }
-        .welcome-message p {
-            margin-bottom: 8px;
+        
+        .welcome p {
+            margin-bottom: 10px;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+        
+        .welcome-features {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin: 30px 0;
+        }
+        
+        .feature-card {
+            padding: 20px;
+            background: linear-gradient(135deg, #f8fafc, #f1f5f9);
+            border-radius: 14px;
+            border: 1px solid #e2e8f0;
+        }
+        
+        .feature-icon {
+            font-size: 32px;
+            margin-bottom: 10px;
+        }
+        
+        .feature-title {
+            font-weight: 600;
+            color: #1e293b;
+            margin-bottom: 6px;
             font-size: 14px;
         }
-        .upload-area {
-            margin-top: 18px;
-            padding: 25px;
-            border: 3px dashed #667eea;
-            border-radius: 15px;
-            background: #f8f9fa;
+        
+        .feature-desc {
+            font-size: 12px;
+            color: #64748b;
+        }
+        
+        .upload-section {
+            margin-top: 30px;
+            padding: 30px;
+            border: 3px dashed #7e22ce;
+            border-radius: 16px;
+            background: linear-gradient(135deg, #faf5ff, #f3e8ff);
             cursor: pointer;
             transition: all 0.3s;
         }
-        .upload-area:hover {
-            background: #eef2ff;
-            border-color: #764ba2;
-        }
-        .upload-area.dragover {
-            background: #eef2ff;
-            border-color: #764ba2;
+        
+        .upload-section:hover {
+            background: linear-gradient(135deg, #f3e8ff, #e9d5ff);
+            border-color: #6b21a8;
             transform: scale(1.02);
         }
+        
         .upload-status {
-            margin-top: 12px;
-            padding: 10px;
-            border-radius: 8px;
+            margin-top: 14px;
+            padding: 12px;
+            border-radius: 10px;
             font-size: 13px;
-            font-weight: bold;
+            font-weight: 500;
             display: none;
         }
+        
         .upload-status.success {
             background: #d1fae5;
             color: #065f46;
             display: block;
         }
-        .upload-status.error {
-            background: #fee2e2;
-            color: #991b1b;
-            display: block;
-        }
+        
         .upload-status.processing {
             background: #dbeafe;
             color: #1e40af;
             display: block;
         }
-        .progress-bar {
-            width: 100%;
-            height: 6px;
-            background: #e5e7eb;
-            border-radius: 3px;
-            margin-top: 10px;
-            overflow: hidden;
-            display: none;
-        }
-        .progress-bar.active {
+        
+        .upload-status.error {
+            background: #fee2e2;
+            color: #991b1b;
             display: block;
-        }
-        .progress-fill {
-            height: 100%;
-            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-            transition: width 0.3s ease;
-            width: 0%;
-        }
-        .upload-details {
-            display: none;
-            margin-top: 10px;
-            padding: 10px;
-            background: rgba(102, 126, 234, 0.1);
-            border-radius: 8px;
-            font-size: 12px;
-        }
-        .upload-details.active {
-            display: block;
-        }
-        .upload-details-grid {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 8px;
-            margin-top: 8px;
-        }
-        .upload-detail-item {
-            text-align: center;
-            padding: 6px;
-            background: white;
-            border-radius: 6px;
-        }
-        .upload-detail-value {
-            font-size: 18px;
-            font-weight: bold;
-            color: #667eea;
-        }
-        .upload-detail-label {
-            font-size: 10px;
-            color: #6b7280;
-            margin-top: 2px;
-        }
-        .system-info {
-            display: flex;
-            gap: 15px;
-            margin-top: 12px;
-            flex-wrap: wrap;
-        }
-        .info-badge {
-            padding: 4px 10px;
-            background: rgba(255,255,255,0.15);
-            border-radius: 12px;
-            font-size: 11px;
-            display: flex;
-            align-items: center;
-            gap: 5px;
-        }
-        .spinner {
-            display: inline-block;
-            width: 12px;
-            height: 12px;
-            border: 2px solid rgba(255,255,255,0.3);
-            border-top-color: white;
-            border-radius: 50%;
-            animation: spin 0.8s linear infinite;
-        }
-        @keyframes spin {
-            to { transform: rotate(360deg); }
         }
     </style>
 </head>
@@ -368,87 +443,88 @@
     <div class="container">
         <div class="header">
             <h1>
-                🤖 Enterprise AI Resume Intelligence
-                <span class="badge">v2.0</span>
+                🤖 LangGraph Multi-Agent Intelligence
+                <span style="font-size: 12px; background: rgba(255,255,255,0.2); padding: 4px 10px; border-radius: 12px; font-weight: normal;">v3.0</span>
             </h1>
-            <p>Multi-Agent Orchestrator • Parallel Processing • Intelligent Caching</p>
+            <div class="subtitle">Agent-to-Agent Communication • Dynamic Workflow • Intelligent Reasoning</div>
             
-            <div class="stats-bar">
-                <div class="stat-item">
+            <div class="agent-flow">
+                <span style="opacity: 0.9; font-weight: 600;">Agent Flow:</span>
+                <div class="agent-badge" id="supervisor-badge">👔 Supervisor</div>
+                <span class="arrow">→</span>
+                <div class="agent-badge" id="search-badge">🔍 Search</div>
+                <span class="arrow">→</span>
+                <div class="agent-badge" id="analysis-badge">🧠 Analysis</div>
+                <span class="arrow">→</span>
+                <div class="agent-badge" id="comparison-badge">⚖️ Comparison</div>
+                <span class="arrow">→</span>
+                <div class="agent-badge" id="ranking-badge">🏆 Ranking</div>
+            </div>
+            
+            <div class="stats-grid">
+                <div class="stat-card">
                     <div class="stat-value" id="totalResumes">0</div>
                     <div class="stat-label">Total Resumes</div>
                 </div>
-                <div class="stat-item">
-                    <div class="stat-value" id="cachedResumes">0</div>
-                    <div class="stat-label">Cached</div>
-                </div>
-                <div class="stat-item">
-                    <div class="stat-value" id="cacheHitRate">0%</div>
-                    <div class="stat-label">Cache Hit Rate</div>
-                </div>
-                <div class="stat-item">
+                <div class="stat-card">
                     <div class="stat-value" id="totalMessages">0</div>
                     <div class="stat-label">Messages</div>
                 </div>
-                <div class="stat-item">
-                    <div class="stat-value" id="systemStatus">🟢</div>
-                    <div class="stat-label">Status</div>
+                <div class="stat-card">
+                    <div class="stat-value" id="agentsCount">5</div>
+                    <div class="stat-label">Active Agents</div>
                 </div>
-            </div>
-
-            <div class="system-info">
-                <div class="info-badge">⚡ <span id="maxWorkers">4</span> Workers</div>
-                <div class="info-badge">💾 Cache: <span id="cacheStatus">Enabled</span></div>
-                <div class="info-badge">📏 Vector Size: <span id="vectorSize">768</span></div>
+                <div class="stat-card">
+                    <div class="stat-value" id="systemStatus">🟢</div>
+                    <div class="stat-label">System Status</div>
+                </div>
             </div>
         </div>
 
         <div class="chat-container">
             <div class="messages" id="messages">
-                <div class="welcome-message">
-                    <h2>👋 Welcome to Enterprise AI Resume Intelligence!</h2>
-                    <p>Powered by Multi-Agent AI with Intelligent Caching & Parallel Processing</p>
+                <div class="welcome">
+                    <h2>🚀 Welcome to LangGraph Multi-Agent System!</h2>
+                    <p>Experience the power of agent-to-agent collaboration with intelligent reasoning</p>
                     
-                    <div class="upload-area" id="uploadArea" onclick="document.getElementById('fileInput').click()">
-                        <input type="file" id="fileInput" multiple accept=".pdf,.docx" style="display: none;" onchange="uploadFiles()">
-                        <div style="font-size: 42px; margin-bottom: 8px;">📁</div>
-                        <p style="font-size: 16px; color: #667eea; font-weight: bold;">Upload Resumes</p>
-                        <p style="font-size: 13px; color: #6b7280;">PDF/DOCX • Parallel Processing • Smart Caching</p>
-                    </div>
-                    
-                    <div class="upload-status" id="uploadStatus"></div>
-                    <div class="progress-bar" id="progressBar">
-                        <div class="progress-fill" id="progressFill"></div>
-                    </div>
-                    
-                    <div class="upload-details" id="uploadDetails">
-                        <div style="font-weight: bold; margin-bottom: 8px;">Upload Summary:</div>
-                        <div class="upload-details-grid">
-                            <div class="upload-detail-item">
-                                <div class="upload-detail-value" id="detailProcessed">0</div>
-                                <div class="upload-detail-label">Processed</div>
-                            </div>
-                            <div class="upload-detail-item">
-                                <div class="upload-detail-value" id="detailCached">0</div>
-                                <div class="upload-detail-label">Cached</div>
-                            </div>
-                            <div class="upload-detail-item">
-                                <div class="upload-detail-value" id="detailFailed">0</div>
-                                <div class="upload-detail-label">Failed</div>
-                            </div>
-                            <div class="upload-detail-item">
-                                <div class="upload-detail-value" id="detailTime">0s</div>
-                                <div class="upload-detail-label">Time</div>
-                            </div>
+                    <div class="welcome-features">
+                        <div class="feature-card">
+                            <div class="feature-icon">🔍</div>
+                            <div class="feature-title">Search Agent</div>
+                            <div class="feature-desc">Semantic discovery with adaptive refinement</div>
+                        </div>
+                        <div class="feature-card">
+                            <div class="feature-icon">🧠</div>
+                            <div class="feature-title">Analysis Agent</div>
+                            <div class="feature-desc">Deep reasoning and quality assessment</div>
+                        </div>
+                        <div class="feature-card">
+                            <div class="feature-icon">⚖️</div>
+                            <div class="feature-title">Comparison Agent</div>
+                            <div class="feature-desc">Side-by-side detailed comparison</div>
+                        </div>
+                        <div class="feature-card">
+                            <div class="feature-icon">🏆</div>
+                            <div class="feature-title">Ranking Agent</div>
+                            <div class="feature-desc">Weighted scoring & final decision</div>
                         </div>
                     </div>
                     
-                    <p style="margin-top: 25px; font-weight: bold;">Try These Queries:</p>
-                    <p style="margin-top: 15px; color: #667eea; font-size: 13px; line-height: 1.8;">
-                        "Find Python developers"<br>
-                        "Show candidates with 5+ years experience"<br>
-                        "List all resumes"<br>
-                        "Compare John Doe and Jane Smith"
+                    <div class="upload-section" onclick="document.getElementById('fileInput').click()">
+                        <input type="file" id="fileInput" multiple accept=".pdf,.docx" style="display: none;" onchange="uploadFiles()">
+                        <div style="font-size: 48px; margin-bottom: 12px;">📁</div>
+                        <p style="font-size: 18px; color: #7e22ce; font-weight: 600;">Upload Resumes</p>
+                        <p style="font-size: 13px; color: #64748b; margin-top: 8px;">PDF/DOCX • Multi-Agent Processing • Intelligent Analysis</p>
+                    </div>
+                    
+                    <div class="upload-status" id="uploadStatus"></div>
+                    
+                    <p style="margin-top: 35px; font-weight: 600; color: #1e293b;">Try These Queries:</p>
+                    <p style="margin-top: 16px; color: #7e22ce; font-size: 13px; line-height: 2;">
+                        "Find the best Python developer for a senior role"<br>
+                        "Compare cloud engineers with AWS certification"<br>
+                        "Who is the most experienced data scientist?"<br>
+                        "Show me candidates from FAANG companies"
                     </p>
                 </div>
                 <div class="typing-indicator" id="typingIndicator">
@@ -458,15 +534,14 @@
 
             <div class="input-area">
                 <div class="quick-actions">
-                    <button class="quick-action" onclick="sendQuickMessage('Find Python developers')">🐍 Python</button>
+                    <button class="quick-action" onclick="sendQuickMessage('Find the best Python developer')">🐍 Python Expert</button>
+                    <button class="quick-action" onclick="sendQuickMessage('Compare top 3 candidates')">⚖️ Compare</button>
                     <button class="quick-action" onclick="sendQuickMessage('Show system stats')">📊 Stats</button>
-                    <button class="quick-action" onclick="sendQuickMessage('List all candidates')">📋 List All</button>
                     <button class="quick-action" onclick="sendQuickMessage('Find cloud engineers')">☁️ Cloud</button>
-                    <button class="quick-action" onclick="sendQuickMessage('Who has AWS certification?')">🏆 AWS</button>
-                    <button class="quick-action" onclick="checkHealth()">🏥 Health</button>
+                    <button class="quick-action" onclick="sendQuickMessage('Who has 10+ years experience?')">⭐ Senior</button>
                 </div>
                 <form class="input-form" onsubmit="sendMessage(event)">
-                    <input type="text" id="userInput" placeholder="Ask me anything about resumes..." autocomplete="off">
+                    <input type="text" id="userInput" placeholder="Ask the multi-agent system anything..." autocomplete="off">
                     <button type="submit" class="send-btn" id="sendBtn">Send 🚀</button>
                 </form>
             </div>
@@ -478,64 +553,23 @@
         let conversationId = null;
         let messageCount = 0;
 
-        // Initialize on load
         window.addEventListener('load', () => {
             updateStats();
-            checkSystemHealth();
             document.getElementById('userInput').focus();
-            
-            // Auto-refresh stats every 30 seconds
             setInterval(updateStats, 30000);
         });
 
-        // Update comprehensive stats
         async function updateStats() {
             try {
                 const response = await fetch(`${API_BASE}/stats`);
                 const data = await response.json();
-                
                 document.getElementById('totalResumes').textContent = data.total_resumes || 0;
-                document.getElementById('cachedResumes').textContent = data.cached_resumes || 0;
-                document.getElementById('cacheHitRate').textContent = data.cache_hit_rate || '0%';
-                document.getElementById('maxWorkers').textContent = data.max_workers || 4;
-                document.getElementById('vectorSize').textContent = data.vector_size || 768;
-                document.getElementById('cacheStatus').textContent = data.cache_enabled ? 'Enabled' : 'Disabled';
-                
-                // Update system status
-                if (data.status === 'operational') {
-                    document.getElementById('systemStatus').textContent = '🟢';
-                } else {
-                    document.getElementById('systemStatus').textContent = '🟡';
-                }
+                document.getElementById('systemStatus').textContent = data.status === 'operational' ? '🟢' : '🔴';
             } catch (error) {
-                console.error('Stats error:', error);
                 document.getElementById('systemStatus').textContent = '🔴';
             }
         }
 
-        // Check system health
-        async function checkHealth() {
-            try {
-                const response = await fetch(`${API_BASE}/health`);
-                const data = await response.json();
-                
-                let healthMsg = `🏥 SYSTEM HEALTH CHECK\n\n`;
-                healthMsg += `Status: ${data.status.toUpperCase()}\n\n`;
-                healthMsg += `Components:\n`;
-                
-                for (const [component, status] of Object.entries(data.components)) {
-                    const icon = status.includes('operational') ? '✅' : '❌';
-                    healthMsg += `${icon} ${component}: ${status}\n`;
-                }
-                
-                addMessage('bot', healthMsg);
-                updateStats();
-            } catch (error) {
-                addMessage('bot', '❌ Health check failed. Please ensure the API server is running.');
-            }
-        }
-
-        // Send message
         async function sendMessage(event) {
             event.preventDefault();
             
@@ -550,6 +584,7 @@
             document.getElementById('totalMessages').textContent = messageCount;
             
             showTyping(true);
+            highlightActiveAgents([]);
             const sendBtn = document.getElementById('sendBtn');
             sendBtn.disabled = true;
             
@@ -571,7 +606,8 @@
                 conversationId = data.conversation_id;
                 
                 showTyping(false);
-                addMessage('bot', data.response);
+                highlightActiveAgents(data.agent_flow);
+                addMessage('bot', data.response, data.execution_details);
                 messageCount++;
                 document.getElementById('totalMessages').textContent = messageCount;
                 
@@ -587,209 +623,144 @@
             }
         }
 
-        // Quick message
         function sendQuickMessage(message) {
             document.getElementById('userInput').value = message;
             document.querySelector('.input-form').dispatchEvent(new Event('submit'));
         }
 
-        // Add message to chat
-        function addMessage(type, content) {
+        function addMessage(type, content, executionDetails = null) {
             const messagesDiv = document.getElementById('messages');
             
-            const welcome = messagesDiv.querySelector('.welcome-message');
+            const welcome = messagesDiv.querySelector('.welcome');
             if (welcome) welcome.remove();
             
             const messageDiv = document.createElement('div');
             messageDiv.className = `message ${type}`;
             
+            const wrapper = document.createElement('div');
+            wrapper.className = 'message-wrapper';
+            
             const avatar = document.createElement('div');
-            avatar.className = 'message-avatar';
+            avatar.className = 'avatar';
             avatar.textContent = type === 'user' ? '👤' : '🤖';
             
             const contentDiv = document.createElement('div');
             contentDiv.className = 'message-content';
             contentDiv.textContent = content;
             
-            if (type === 'user') {
-                messageDiv.appendChild(contentDiv);
-                messageDiv.appendChild(avatar);
-            } else {
-                messageDiv.appendChild(avatar);
-                messageDiv.appendChild(contentDiv);
+            // Add execution details for bot messages
+            if (type === 'bot' && executionDetails) {
+                const detailsDiv = document.createElement('div');
+                detailsDiv.className = 'execution-details';
+                
+                let detailsHTML = '<div class="execution-details-title">🔍 Execution Details</div>';
+                detailsHTML += `<div class="execution-metric"><span>Agents Involved:</span><span>${executionDetails.agents_involved || 0}</span></div>`;
+                detailsHTML += `<div class="execution-metric"><span>Candidates Analyzed:</span><span>${executionDetails.candidates_analyzed || 0}</span></div>`;
+                detailsHTML += `<div class="execution-metric"><span>Iterations:</span><span>${executionDetails.iterations || 0}</span></div>`;
+                
+                if (executionDetails.execution_log && executionDetails.execution_log.length > 0) {
+                    detailsHTML += '<div class="execution-log">';
+                    executionDetails.execution_log.forEach(log => {
+                        detailsHTML += `<div class="log-entry">• ${log}</div>`;
+                    });
+                    detailsHTML += '</div>';
+                }
+                
+                detailsDiv.innerHTML = detailsHTML;
+                contentDiv.appendChild(detailsDiv);
             }
+            
+            wrapper.appendChild(avatar);
+            wrapper.appendChild(contentDiv);
+            messageDiv.appendChild(wrapper);
             
             messagesDiv.appendChild(messageDiv);
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
         }
 
-        // Show/hide typing indicator
         function showTyping(show) {
             const indicator = document.getElementById('typingIndicator');
-            if (show) {
-                indicator.classList.add('active');
-            } else {
-                indicator.classList.remove('active');
-            }
-            
+            indicator.classList.toggle('active', show);
             const messagesDiv = document.getElementById('messages');
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
         }
 
-        // Upload functionality with progress tracking
+        function highlightActiveAgents(agentFlow) {
+            // Reset all badges
+            ['supervisor', 'search', 'analysis', 'comparison', 'ranking'].forEach(agent => {
+                const badge = document.getElementById(`${agent}-badge`);
+                if (badge) badge.classList.remove('active');
+            });
+            
+            // Highlight active agents
+            agentFlow.forEach(agentName => {
+                const name = agentName.toLowerCase().split(' ')[1]; // Extract agent name
+                const badge = document.getElementById(`${name}-badge`);
+                if (badge) badge.classList.add('active');
+            });
+        }
+
         async function uploadFiles() {
             const fileInput = document.getElementById('fileInput');
             const files = fileInput.files;
             const status = document.getElementById('uploadStatus');
-            const uploadArea = document.getElementById('uploadArea');
-            const progressBar = document.getElementById('progressBar');
-            const progressFill = document.getElementById('progressFill');
-            const uploadDetails = document.getElementById('uploadDetails');
 
             if (files.length === 0) return;
 
-            // Reset UI
             status.className = 'upload-status processing';
-            status.innerHTML = `⏳ Processing ${files.length} resumes with AI agents...<div class="spinner" style="margin-top: 8px;"></div>`;
-            uploadArea.style.opacity = '0.5';
-            progressBar.classList.add('active');
-            progressFill.style.width = '0%';
-            uploadDetails.classList.remove('active');
+            status.innerHTML = `⏳ Processing ${files.length} resumes with multi-agent system...`;
 
             const formData = new FormData();
             for (let file of files) {
                 formData.append('files', file);
             }
 
-            // Simulate progress (since we're using parallel processing)
-            const progressInterval = setInterval(() => {
-                const currentWidth = parseFloat(progressFill.style.width);
-                if (currentWidth < 90) {
-                    progressFill.style.width = (currentWidth + 10) + '%';
-                }
-            }, 500);
-
             try {
-                const startTime = Date.now();
-                
                 const response = await fetch(`${API_BASE}/upload`, {
                     method: 'POST',
                     body: formData
                 });
-
-                clearInterval(progressInterval);
-                progressFill.style.width = '100%';
 
                 if (!response.ok) {
                     throw new Error(`HTTP error! status: ${response.status}`);
                 }
 
                 const data = await response.json();
-                const processingTime = ((Date.now() - startTime) / 1000).toFixed(2);
 
-                // Show success with details
                 status.className = 'upload-status success';
-                
-                const cacheMsg = data.cached > 0 ? ` (${data.cached} from cache!)` : '';
-                status.textContent = `✅ Success! Processed ${data.processed}/${data.total_files} resumes in ${data.processing_time}s${cacheMsg}`;
-
-                // Show upload details
-                uploadDetails.classList.add('active');
-                document.getElementById('detailProcessed').textContent = data.processed;
-                document.getElementById('detailCached').textContent = data.cached;
-                document.getElementById('detailFailed').textContent = data.failed;
-                document.getElementById('detailTime').textContent = data.processing_time + 's';
+                status.textContent = `✅ Success! Processed ${data.processed} resumes`;
 
                 fileInput.value = '';
-                uploadArea.style.opacity = '1';
                 updateStats();
                 
-                // Show success message in chat
                 setTimeout(() => {
-                    let msg = `✅ Upload complete!\n\n`;
-                    msg += `📊 Summary:\n`;
-                    msg += `   • Total files: ${data.total_files}\n`;
-                    msg += `   • Processed: ${data.processed}\n`;
-                    msg += `   • Cached: ${data.cached} (reused from previous uploads)\n`;
-                    msg += `   • Failed: ${data.failed}\n`;
-                    msg += `   • Processing time: ${data.processing_time}s\n\n`;
-                    
-                    if (data.cached > 0) {
-                        msg += `⚡ ${data.cached} resumes loaded instantly from cache!\n\n`;
-                    }
-                    
-                    msg += `You can now ask me questions about these resumes!`;
-                    addMessage('bot', msg);
+                    addMessage('bot', `✅ Upload complete! Processed ${data.processed} resumes.\n\nYou can now ask the multi-agent system to analyze these candidates!`);
                 }, 1000);
 
-                // Hide progress bar after 2 seconds
-                setTimeout(() => {
-                    progressBar.classList.remove('active');
-                }, 2000);
-
             } catch (error) {
-                clearInterval(progressInterval);
                 console.error('Upload error:', error);
                 status.className = 'upload-status error';
                 status.textContent = '❌ Upload failed. Ensure API server is running on port 8000.';
-                uploadArea.style.opacity = '1';
-                progressBar.classList.remove('active');
             }
         }
 
-        // Drag and drop support
-        const uploadArea = document.getElementById('uploadArea');
+        // Drag and drop
+        const uploadSection = document.querySelector('.upload-section');
         
         ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-            uploadArea.addEventListener(eventName, preventDefaults, false);
+            uploadSection?.addEventListener(eventName, (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+            });
         });
 
-        function preventDefaults(e) {
-            e.preventDefault();
-            e.stopPropagation();
-        }
-
-        ['dragenter', 'dragover'].forEach(eventName => {
-            uploadArea.addEventListener(eventName, () => {
-                uploadArea.classList.add('dragover');
-            }, false);
-        });
-
-        ['dragleave', 'drop'].forEach(eventName => {
-            uploadArea.addEventListener(eventName, () => {
-                uploadArea.classList.remove('dragover');
-            }, false);
-        });
-
-        uploadArea.addEventListener('drop', (e) => {
+        uploadSection?.addEventListener('drop', (e) => {
             const dt = e.dataTransfer;
             const files = dt.files;
             document.getElementById('fileInput').files = files;
             uploadFiles();
-        }, false);
-
-        // Enter key handler
-        document.getElementById('userInput').addEventListener('keypress', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                sendMessage(e);
-            }
         });
-
-        // Check system health on startup
-        async function checkSystemHealth() {
-            try {
-                const response = await fetch(`${API_BASE}/health`);
-                const data = await response.json();
-                
-                if (data.status !== 'healthy') {
-                    console.warn('System health check:', data);
-                }
-            } catch (error) {
-                console.error('Health check failed:', error);
-                document.getElementById('systemStatus').textContent = '🔴';
-            }
-        }
     </script>
 </body>
 </html>
+
