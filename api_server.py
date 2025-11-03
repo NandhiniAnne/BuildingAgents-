@@ -1,11 +1,6 @@
 """
-Arytic - Optimized for CPU-Only Mistral
-MAJOR SPEED IMPROVEMENTS:
-- Batch LLM processing (7x faster)
-- Process only top 5 candidates (10x fewer LLM calls)
-- Reduced context windows
-- Simplified prompts for faster inference
-- Parallel resume processing maintained
+Arytic - Intelligent Resume RAG System
+Version 6.0 - LLM-driven extraction with intelligent matching
 """
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
@@ -35,8 +30,8 @@ from qdrant_client.models import Distance, VectorParams, PointStruct
 import PyPDF2
 import docx
 
-# ============== OPTIMIZED CONFIGURATION ==============
-OLLAMA_MODEL = "mistral:latest"
+# ============== CONFIGURATION ==============
+OLLAMA_MODEL = "llama3.2:3b"
 OLLAMA_BASE_URL = "http://localhost:11434"
 EMBEDDING_MODEL = "nomic-embed-text:latest"
 QDRANT_URL = "http://localhost:6333"
@@ -45,20 +40,19 @@ UPLOAD_DIR = "arytic_uploads"
 
 # Optimized CPU settings
 CPU_THREADS = 4
-MAX_CONCURRENT_UPLOADS = 3  # Reduced for stability
+MAX_CONCURRENT_UPLOADS = 3
 MAX_WORKERS = 3
-CONTEXT_SIZE = 1024  # Reduced for faster inference
+CONTEXT_SIZE = 2048
 
-# Processing limits for speed
-MAX_CANDIDATES_TO_ENHANCE = 5  # Only enhance top 5 (was 15)
-MAX_CANDIDATES_TO_SCORE = 5  # Only score top 5 (was 10)
-MAX_SEARCH_RESULTS = 30  # Reduced initial search (was 50)
+# Processing limits
+MAX_SEARCH_RESULTS = 30
+TOP_CANDIDATES = 5
 
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
 
 # ============== FASTAPI SETUP ==============
-app = FastAPI(title="Arytic Intelligent AI Recruiting - CPU Optimized")
+app = FastAPI(title="Arytic - Intelligent Resume RAG")
 
 app.add_middleware(
     CORSMiddleware,
@@ -72,12 +66,11 @@ app.add_middleware(
 qdrant_client = QdrantClient(url=QDRANT_URL)
 embeddings = OllamaEmbeddings(model=EMBEDDING_MODEL, base_url=OLLAMA_BASE_URL)
 
-# CPU-optimized LLM with reduced context
 llm = ChatOllama(
     model=OLLAMA_MODEL, 
     base_url=OLLAMA_BASE_URL, 
-    temperature=0.3,
-    num_ctx=CONTEXT_SIZE,  # Reduced for speed
+    temperature=0.1,
+    num_ctx=CONTEXT_SIZE,
     num_thread=CPU_THREADS,
     num_gpu=0
 )
@@ -108,7 +101,6 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     response: str
     conversation_id: str
-    agent_flow: List[str]
     execution_details: Dict[str, Any]
 
 class UploadResponse(BaseModel):
@@ -122,59 +114,262 @@ class AgentState(TypedDict):
     user_query: str
     parsed_requirements: Dict[str, Any]
     search_results: List[Dict]
-    enhanced_candidates: List[Dict]
-    scored_candidates: List[Dict]
+    analyzed_candidates: List[Dict]
     final_recommendation: str
     next_agent: str
     execution_log: List[str]
 
-# ============== UNIVERSAL QUERY UNDERSTANDING AGENT (OPTIMIZED) ==============
-class UniversalQueryParser:
+# ============== INTELLIGENT EXTRACTION AGENT ==============
+
+class IntelligentExtractionAgent:
+    """LLM-driven extraction - learns patterns from resume structure"""
     
     def __init__(self, llm):
         self.llm = llm
-        self.name = "🧠 Universal Query Parser"
+        self.name = "🤖 Intelligent Extraction Agent"
+    
+    def extract_resume_data(self, text: str, filename: str) -> dict:
+        """Use LLM to intelligently extract all resume fields"""
+        
+        print(f"\n   🤖 {self.name}: Analyzing resume")
+        
+        # Truncate text to fit context
+        resume_text = text[:4000]
+        
+        extraction_prompt = f"""You are an expert resume parser. Extract information from this resume text.
+
+RESUME TEXT:
+{resume_text}
+
+Extract the following information and return as JSON:
+
+{{
+  "name": "candidate's full name from header",
+  "email": "email address (format: user@domain.com)",
+  "phone": "phone number with proper formatting",
+  "location": "current location or city/state mentioned",
+  "current_role": "most recent job title",
+  "years_experience": "total years of professional experience (number only)",
+  "skills": ["list all technical and professional skills mentioned"],
+  "certifications": ["list all certifications, licenses, or credentials"],
+  "education": {{
+    "degree": "highest degree earned",
+    "university": "university or institution name",
+    "graduation_year": "year of graduation"
+  }},
+  "experience": [
+    {{
+      "company": "company name",
+      "role": "job title",
+      "duration": "time period (e.g., 2020-2023)",
+      "description": "brief summary of responsibilities"
+    }}
+  ]
+}}
+
+EXTRACTION INSTRUCTIONS:
+1. NAME: Look at the top of resume, usually in large text
+2. EMAIL: Find pattern like name@company.com
+3. PHONE: Find 10-digit phone number patterns
+4. LOCATION: Look for City, State or address information
+5. CURRENT ROLE: First job title listed in experience section
+6. YEARS OF EXPERIENCE: 
+   - Look for phrases like "10+ years experience"
+   - OR calculate from employment dates (2015-present = 8-9 years)
+   - OR count years across all jobs
+7. SKILLS: 
+   - Look in "Skills" or "Technical Skills" section
+   - Include programming languages, tools, technologies
+   - Include soft skills if clearly listed
+8. CERTIFICATIONS:
+   - Look in "Certifications" or "Licenses" section
+   - Include professional certifications (PMP, AWS, Scrum, etc.)
+   - Include licenses (CPA, PE, etc.)
+9. EDUCATION:
+   - Find degree name (Bachelor's, Master's, PhD, etc.)
+   - Find university name
+   - Find graduation year
+10. EXPERIENCE:
+    - Extract last 3-4 jobs
+    - Include company, role, duration, brief description
+
+CRITICAL RULES:
+- If you cannot find something, use "N/A" for strings, 0 for numbers, or [] for arrays
+- Be precise - only extract what is clearly stated
+- For skills and certifications, look for dedicated sections first
+- Do not infer or assume information
+- Return ONLY valid JSON, no explanations
+
+JSON:"""
+
+        try:
+            result = self.llm.invoke(extraction_prompt)
+            result_text = result.content if hasattr(result, 'content') else str(result)
+            
+            # Clean response
+            result_text = result_text.strip()
+            result_text = re.sub(r'```json\s*', '', result_text)
+            result_text = re.sub(r'```\s*', '', result_text)
+            
+            # Extract JSON
+            json_match = re.search(r'\{[\s\S]*\}', result_text)
+            
+            if json_match:
+                json_str = json_match.group(0)
+                # Remove trailing commas
+                json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
+                
+                data = json.loads(json_str)
+                
+                # Validate and structure data
+                final_data = {
+                    "name": str(data.get('name', 'N/A')).strip(),
+                    "email": str(data.get('email', 'N/A')).strip(),
+                    "phone": str(data.get('phone', 'N/A')).strip(),
+                    "location": str(data.get('location', 'N/A')).strip(),
+                    "current_role": str(data.get('current_role', 'N/A')).strip(),
+                    "years_experience": self._parse_years(data.get('years_experience', 0)),
+                    "skills": self._parse_list(data.get('skills', [])),
+                    "certifications": self._parse_list(data.get('certifications', [])),
+                    "degree": "N/A",
+                    "university": "N/A",
+                    "graduation_year": "N/A",
+                    "experience": []
+                }
+                
+                # Parse education
+                if isinstance(data.get('education'), dict):
+                    edu = data['education']
+                    final_data['degree'] = str(edu.get('degree', 'N/A')).strip()
+                    final_data['university'] = str(edu.get('university', 'N/A')).strip()
+                    final_data['graduation_year'] = str(edu.get('graduation_year', 'N/A')).strip()
+                
+                # Parse experience
+                if isinstance(data.get('experience'), list):
+                    final_data['experience'] = data['experience'][:5]
+                
+                # Create companies list from experience
+                final_data['previous_companies'] = [
+                    exp.get('company', 'N/A') 
+                    for exp in final_data['experience'] 
+                    if exp.get('company')
+                ][:5]
+                
+                print(f"   ✅ {final_data['name']} | {final_data['current_role']}")
+                print(f"   ✅ Skills: {len(final_data['skills'])} | Certs: {len(final_data['certifications'])}")
+                print(f"   ✅ Location: {final_data['location']} | Experience: {final_data['years_experience']} years")
+                
+                return final_data
+            else:
+                print(f"   ⚠️ Could not parse JSON, using fallback")
+                return self.create_fallback_data(text, filename)
+                
+        except json.JSONDecodeError as e:
+            print(f"   ⚠️ JSON parse error: {e}")
+            return self.create_fallback_data(text, filename)
+        except Exception as e:
+            print(f"   ⚠️ Extraction error: {e}")
+            return self.create_fallback_data(text, filename)
+    
+    def _parse_years(self, value) -> int:
+        """Parse years experience"""
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str):
+            # Extract number from string
+            match = re.search(r'(\d+)', value)
+            if match:
+                return int(match.group(1))
+        return 0
+    
+    def _parse_list(self, value) -> list:
+        """Parse list fields"""
+        if isinstance(value, list):
+            return [str(item).strip() for item in value if item][:30]
+        return []
+    
+    def create_fallback_data(self, text: str, filename: str) -> dict:
+        """Fallback extraction using simple patterns"""
+        print(f"   🔄 Using fallback extraction")
+        
+        # Simple regex fallbacks
+        email_match = re.search(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', text)
+        phone_match = re.search(r'\b\d{3}[-.]?\d{3}[-.]?\d{4}\b', text)
+        
+        name = filename.replace('.pdf', '').replace('.docx', '').replace('_', ' ').strip().title()
+        
+        return {
+            "name": name,
+            "email": email_match.group(0) if email_match else "N/A",
+            "phone": phone_match.group(0) if phone_match else "N/A",
+            "location": "N/A",
+            "current_role": "N/A",
+            "years_experience": 0,
+            "skills": [],
+            "certifications": [],
+            "degree": "N/A",
+            "university": "N/A",
+            "graduation_year": "N/A",
+            "experience": [],
+            "previous_companies": []
+        }
+
+
+# ============== AGENT 1: QUERY UNDERSTANDING ==============
+class QueryUnderstandingAgent:
+    
+    def __init__(self, llm):
+        self.llm = llm
+        self.name = "🧠 Query Understanding Agent"
     
     def __call__(self, state: AgentState) -> AgentState:
         query = state["user_query"]
         
-        log_msg = f"{self.name}: Understanding query"
+        log_msg = f"{self.name}: Analyzing query"
         print(f"\n{log_msg}")
         state["execution_log"].append(log_msg)
         
-        # OPTIMIZED: Shorter, more direct prompt
-        understanding_prompt = f"""Extract job requirements from this query. Return ONLY JSON.
+        understanding_prompt = f"""Analyze this hiring query and extract key requirements.
 
 QUERY: "{query}"
 
-JSON format:
+Extract requirements and return JSON:
 {{
-  "role": "job title",
-  "skills_required": ["skill1", "skill2"],
-  "experience_years": 5,
-  "location": "city/state",
-  "languages_explicit": ["English", "Japanese"],
-  "languages_implicit": ["inferred from context"],
-  "education": "degree",
-  "certifications": ["cert1"],
-  "cultural_requirements": ["requirement1"],
-  "other_requirements": ["other1"]
+  "role": "job title if mentioned, else null",
+  "skills": ["required skills if mentioned"],
+  "experience_years": "number if mentioned, else null",
+  "location": "location if mentioned, else null",
+  "certifications": ["certifications if mentioned"],
+  "keywords": ["other important keywords from query"]
 }}
 
-RULES:
-- "bilingual English-Japanese" → languages_explicit: ["English", "Japanese"]
-- "work with Japanese clients" → languages_implicit: ["Japanese"]
-- "in Texas" → location: "Texas"
-- "5 years" → experience_years: 5
-- "senior" → experience_years: 7
+EXAMPLES:
+Query: "Find me a software developer with Python experience"
+→ {{"role": "software developer", "skills": ["Python"], "experience_years": null, "location": null, "certifications": [], "keywords": []}}
 
-Return ONLY JSON, no explanation."""
+Query: "I need someone with 5 years experience in AWS and based in California"
+→ {{"role": null, "skills": ["AWS"], "experience_years": 5, "location": "California", "certifications": [], "keywords": []}}
+
+Query: "Looking for PMP certified project manager"
+→ {{"role": "project manager", "skills": [], "experience_years": null, "location": null, "certifications": ["PMP"], "keywords": []}}
+
+RULES:
+- Only extract what is explicitly mentioned
+- Use null for missing information
+- Be precise with skill names
+- Return valid JSON only
+
+JSON:"""
 
         try:
             result = self.llm.invoke(understanding_prompt)
             result_text = result.content if hasattr(result, 'content') else str(result)
             
+            # Clean and parse
+            result_text = re.sub(r'```json\s*', '', result_text)
+            result_text = re.sub(r'```\s*', '', result_text)
             json_match = re.search(r'\{[\s\S]*\}', result_text)
+            
             if json_match:
                 json_str = json_match.group(0)
                 json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
@@ -182,28 +377,27 @@ Return ONLY JSON, no explanation."""
                 
                 state["parsed_requirements"] = requirements
                 
-                log_msg = f"✓ Extracted: {requirements.get('role', 'Any')} | {requirements.get('experience_years', 0)}yr"
+                log_msg = f"✓ Requirements: {requirements}"
                 print(f"   {log_msg}")
                 state["execution_log"].append(log_msg)
             else:
                 state["parsed_requirements"] = {}
                 
         except Exception as e:
-            print(f"   ⚠️ Parsing error: {e}")
+            print(f"   ⚠️ Error: {e}")
             state["parsed_requirements"] = {}
         
         state["next_agent"] = "search"
         return state
 
 
-# ============== INTELLIGENT SEARCH AGENT (OPTIMIZED) ==============
+# ============== AGENT 2: INTELLIGENT SEARCH ==============
 class IntelligentSearchAgent:
     
-    def __init__(self, llm, qdrant_client, embeddings):
-        self.llm = llm
+    def __init__(self, qdrant_client, embeddings):
         self.qdrant = qdrant_client
         self.embeddings = embeddings
-        self.name = "🔍 Intelligent Search"
+        self.name = "🔍 Intelligent Search Agent"
     
     def __call__(self, state: AgentState) -> AgentState:
         query = state["user_query"]
@@ -213,30 +407,29 @@ class IntelligentSearchAgent:
         print(f"\n{log_msg}")
         state["execution_log"].append(log_msg)
         
-        # Build enhanced search query
+        # Build semantic search query
         search_parts = []
-        if requirements:
-            if requirements.get('role'):
-                search_parts.append(requirements['role'])
-            if requirements.get('skills_required'):
-                search_parts.extend(requirements['skills_required'][:3])  # Top 3 skills only
-            if requirements.get('location'):
-                search_parts.append(requirements['location'])
-            if requirements.get('languages_explicit'):
-                search_parts.extend(requirements['languages_explicit'])
+        if requirements.get('role'):
+            search_parts.append(requirements['role'])
+        if requirements.get('skills'):
+            search_parts.extend(requirements['skills'])
+        if requirements.get('keywords'):
+            search_parts.extend(requirements['keywords'])
+        if requirements.get('certifications'):
+            search_parts.extend(requirements['certifications'])
         
-        enhanced_query = ' '.join(search_parts) if search_parts else query
+        search_query = ' '.join(search_parts) if search_parts else query
         
-        log_msg = f"Query: {enhanced_query[:80]}"
+        log_msg = f"Search: {search_query}"
         print(f"   {log_msg}")
         state["execution_log"].append(log_msg)
         
-        # Semantic search with REDUCED limit
-        query_embedding = self.embeddings.embed_query(enhanced_query)
+        # Semantic search with embeddings
+        query_embedding = self.embeddings.embed_query(search_query)
         results = self.qdrant.search(
             collection_name=COLLECTION_NAME,
             query_vector=query_embedding,
-            limit=MAX_SEARCH_RESULTS  # Reduced from 50 to 30
+            limit=MAX_SEARCH_RESULTS
         )
         
         if not results:
@@ -244,7 +437,6 @@ class IntelligentSearchAgent:
             state["final_recommendation"] = "❌ No candidates found. Please upload resumes first."
             return state
         
-        # Extract candidates
         candidates = []
         for r in results:
             candidate = r.payload.copy()
@@ -253,353 +445,154 @@ class IntelligentSearchAgent:
         
         state["search_results"] = candidates
         
-        log_msg = f"✓ Retrieved {len(candidates)} candidates"
+        log_msg = f"✓ Found {len(candidates)} candidates"
         print(f"   {log_msg}")
         state["execution_log"].append(log_msg)
         
-        state["next_agent"] = "enhancement"
+        state["next_agent"] = "analysis"
         return state
 
 
-# ============== BATCH ENHANCEMENT AGENT (MASSIVE OPTIMIZATION) ==============
-class CandidateEnhancementAgent:
+# ============== AGENT 3: INTELLIGENT MATCHING & RANKING ==============
+class IntelligentMatchingAgent:
     
     def __init__(self, llm):
         self.llm = llm
-        self.name = "✨ Enhancement Agent"
-    
-    def enhance_candidates_batch(self, candidates: List[Dict]) -> List[Dict]:
-        """OPTIMIZED: Process all candidates in ONE LLM call instead of 15"""
-        
-        # Prepare compact candidate summaries
-        candidate_summaries = []
-        for i, c in enumerate(candidates[:MAX_CANDIDATES_TO_ENHANCE]):
-            summary = {
-                "id": i,
-                "name": c.get('name', 'N/A'),
-                "role": c.get('current_role', 'N/A'),
-                "skills": c.get('skills', [])[:5],  # Top 5 skills only
-                "education": f"{c.get('degree', 'N/A')} - {c.get('university', 'N/A')}",
-                "location": c.get('location', 'N/A')
-            }
-            candidate_summaries.append(summary)
-        
-        # OPTIMIZED: Batch prompt for all candidates
-        batch_prompt = f"""Analyze these {len(candidate_summaries)} candidates. For each, infer languages and skills.
-
-CANDIDATES:
-{json.dumps(candidate_summaries, indent=1)}
-
-For each candidate by ID, return:
-- inferred_languages: Languages likely known based on education/work location
-- cultural_competencies: Cross-cultural skills
-- international_experience: true/false
-
-Return ONLY JSON array:
-[
-  {{"id": 0, "inferred_languages": ["Japanese"], "cultural_competencies": ["Cross-cultural"], "international_experience": true}},
-  {{"id": 1, "inferred_languages": [], "cultural_competencies": [], "international_experience": false}}
-]
-
-JSON only, no explanation."""
-
-        try:
-            result = self.llm.invoke(batch_prompt)
-            result_text = result.content if hasattr(result, 'content') else str(result)
-            
-            # Extract JSON array
-            json_match = re.search(r'\[[\s\S]*\]', result_text)
-            if json_match:
-                json_str = json_match.group(0)
-                json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
-                enhancements_list = json.loads(json_str)
-                
-                # Map back to candidates
-                enhancements_by_id = {e.get('id', i): e for i, e in enumerate(enhancements_list)}
-                return enhancements_by_id
-        except Exception as e:
-            print(f"   ⚠️ Batch enhancement error: {e}")
-        
-        # Fallback: empty enhancements
-        return {}
+        self.name = "🎯 Intelligent Matching Agent"
     
     def __call__(self, state: AgentState) -> AgentState:
-        candidates = state["search_results"]
+        candidates = state["search_results"][:TOP_CANDIDATES]
+        requirements = state.get("parsed_requirements", {})
+        query = state["user_query"]
         
-        log_msg = f"{self.name}: Batch enhancing top {MAX_CANDIDATES_TO_ENHANCE} candidates"
+        log_msg = f"{self.name}: Analyzing top {len(candidates)} candidates"
         print(f"\n{log_msg}")
         state["execution_log"].append(log_msg)
         
-        # OPTIMIZED: ONE batch call instead of 15 individual calls
-        enhancements_map = self.enhance_candidates_batch(candidates)
-        
-        enhanced_candidates = []
-        for i, candidate in enumerate(candidates):
-            if i < MAX_CANDIDATES_TO_ENHANCE:
-                enhancements = enhancements_map.get(i, {
-                    "inferred_languages": [],
-                    "cultural_competencies": [],
-                    "international_experience": False
-                })
-                candidate['enhancements'] = enhancements
-                
-                # Merge languages
-                all_languages = []
-                for skill in candidate.get('skills', []):
-                    if any(lang in skill.lower() for lang in ['japanese', 'chinese', 'korean', 'french', 'german', 'spanish']):
-                        all_languages.append(skill)
-                
-                all_languages.extend(enhancements.get('inferred_languages', []))
-                candidate['all_languages'] = list(set(all_languages))
-            else:
-                # Don't enhance beyond top 5
-                candidate['enhancements'] = {}
-                candidate['all_languages'] = []
-            
-            enhanced_candidates.append(candidate)
-        
-        state["enhanced_candidates"] = enhanced_candidates
-        
-        log_msg = f"✓ Enhanced {MAX_CANDIDATES_TO_ENHANCE} profiles in 1 batch"
-        print(f"   {log_msg}")
-        state["execution_log"].append(log_msg)
-        
-        state["next_agent"] = "scoring"
-        return state
-
-
-# ============== BATCH SCORING AGENT (MASSIVE OPTIMIZATION) ==============
-class IntelligentScoringAgent:
-    
-    def __init__(self, llm):
-        self.llm = llm
-        self.name = "🎯 Intelligent Scoring"
-    
-    def score_candidates_batch(self, candidates: List[Dict], requirements: Dict, query: str) -> Dict:
-        """OPTIMIZED: Score all candidates in ONE LLM call"""
-        
-        # Prepare compact summaries
+        # Prepare candidate data
         candidate_summaries = []
-        for i, c in enumerate(candidates[:MAX_CANDIDATES_TO_SCORE]):
+        for i, c in enumerate(candidates):
             summary = {
                 "id": i,
                 "name": c.get('name'),
                 "role": c.get('current_role'),
-                "exp": c.get('years_experience'),
-                "skills": c.get('skills', [])[:5],
-                "languages": c.get('all_languages', []),
-                "location": c.get('location')
+                "experience_years": c.get('years_experience'),
+                "skills": c.get('skills', [])[:20],
+                "certifications": c.get('certifications', []),
+                "location": c.get('location'),
+                "degree": c.get('degree'),
+                "companies": c.get('previous_companies', [])[:3]
             }
             candidate_summaries.append(summary)
         
-        # OPTIMIZED: Batch scoring prompt
-        batch_prompt = f"""Score these {len(candidate_summaries)} candidates (0-100) against requirements.
+        matching_prompt = f"""You are an expert recruiter. Analyze these candidates and rank them by fit.
 
-REQUIREMENTS: {json.dumps(requirements, separators=(',', ':'))}
+USER QUERY: "{query}"
+
+REQUIREMENTS:
+{json.dumps(requirements, indent=2)}
 
 CANDIDATES:
-{json.dumps(candidate_summaries, indent=1)}
+{json.dumps(candidate_summaries, indent=2)}
 
-For each candidate by ID, return score and brief reason:
+For each candidate, provide match analysis:
 [
-  {{"id": 0, "score": 92, "reason": "Perfect match - has required skills and languages"}},
-  {{"id": 1, "score": 78, "reason": "Good technical match, missing language requirement"}}
+  {{
+    "id": 0,
+    "score": 85,
+    "matched_skills": ["Python", "AWS"],
+    "why_match": "Strong Python background with 5 years AWS experience",
+    "concerns": ["Location mismatch"],
+    "reasoning": "Detailed explanation of fit"
+  }}
 ]
 
-JSON array only."""
+SCORING CRITERIA:
+- Skills match: 40 points
+- Experience level: 30 points  
+- Location match: 15 points
+- Certifications: 15 points
+
+Return JSON array only:"""
 
         try:
-            result = self.llm.invoke(batch_prompt)
+            result = self.llm.invoke(matching_prompt)
             result_text = result.content if hasattr(result, 'content') else str(result)
             
+            # Clean and parse
+            result_text = re.sub(r'```json\s*', '', result_text)
+            result_text = re.sub(r'```\s*', '', result_text)
             json_match = re.search(r'\[[\s\S]*\]', result_text)
+            
             if json_match:
                 json_str = json_match.group(0)
                 json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
-                scores_list = json.loads(json_str)
+                analysis_list = json.loads(json_str)
                 
-                scores_by_id = {s.get('id', i): s for i, s in enumerate(scores_list)}
-                return scores_by_id
+                # Merge analysis with candidates
+                for i, candidate in enumerate(candidates):
+                    if i < len(analysis_list):
+                        analysis = analysis_list[i]
+                        candidate['match_score'] = analysis.get('score', 50)
+                        candidate['matched_skills'] = analysis.get('matched_skills', [])
+                        candidate['why_match'] = analysis.get('why_match', '')
+                        candidate['concerns'] = analysis.get('concerns', [])
+                        candidate['reasoning'] = analysis.get('reasoning', '')
+                    else:
+                        candidate['match_score'] = 50
+                
+                # Sort by score
+                candidates.sort(key=lambda x: x.get('match_score', 0), reverse=True)
+                
+                state["analyzed_candidates"] = candidates
+                
+                log_msg = f"✓ Top score: {candidates[0].get('match_score', 0)}/100"
+                print(f"   {log_msg}")
+                state["execution_log"].append(log_msg)
+                
         except Exception as e:
-            print(f"   ⚠️ Batch scoring error: {e}")
+            print(f"   ⚠️ Error: {e}")
+            state["analyzed_candidates"] = candidates
         
-        return {}
-    
-    def __call__(self, state: AgentState) -> AgentState:
-        candidates = state["enhanced_candidates"]
-        requirements = state.get("parsed_requirements", {})
-        query = state["user_query"]
-        
-        log_msg = f"{self.name}: Batch scoring top {MAX_CANDIDATES_TO_SCORE}"
-        print(f"\n{log_msg}")
-        state["execution_log"].append(log_msg)
-        
-        # OPTIMIZED: ONE batch call instead of 10 individual calls
-        scores_map = self.score_candidates_batch(candidates, requirements, query)
-        
-        scored_candidates = []
-        
-        for i, candidate in enumerate(candidates):
-            if i < MAX_CANDIDATES_TO_SCORE:
-                score_data = scores_map.get(i, {"score": 50, "reason": "Semantic match"})
-                candidate['ai_score'] = score_data.get('score', 50)
-                candidate['score_breakdown'] = {
-                    "total_score": candidate['ai_score'],
-                    "reasoning": score_data.get('reason', 'Retrieved by search'),
-                    "strengths": ["AI analyzed"],
-                    "concerns": [],
-                    "matched_requirements": [],
-                    "missing_requirements": []
-                }
-            else:
-                # Use semantic score for rest
-                candidate['ai_score'] = candidate.get('semantic_score', 50)
-                candidate['score_breakdown'] = {
-                    "total_score": candidate['ai_score'],
-                    "reasoning": "Semantic similarity",
-                    "strengths": ["Retrieved by search"],
-                    "concerns": [],
-                    "matched_requirements": [],
-                    "missing_requirements": []
-                }
-            scored_candidates.append(candidate)
-        
-        scored_candidates.sort(key=lambda x: x.get('ai_score', 0), reverse=True)
-        
-        state["scored_candidates"] = scored_candidates
-        
-        log_msg = f"✓ Scored {MAX_CANDIDATES_TO_SCORE} in 1 batch - Top: {scored_candidates[0].get('ai_score', 0)}/100"
-        print(f"   {log_msg}")
-        state["execution_log"].append(log_msg)
-        
-        state["next_agent"] = "ranking"
-        return state
-
-
-# ============== FINAL RANKING AGENT (UNCHANGED) ==============
-class FinalRankingAgent:
-    
-    def __init__(self, llm):
-        self.llm = llm
-        self.name = "🏆 Final Ranking"
-    
-    def __call__(self, state: AgentState) -> AgentState:
-        candidates = state["scored_candidates"]
-        requirements = state.get("parsed_requirements", {})
-        query = state["user_query"]
-        
-        log_msg = f"{self.name}: Generating recommendations"
-        print(f"\n{log_msg}")
-        state["execution_log"].append(log_msg)
-        
-        if not candidates:
-            state["final_recommendation"] = "❌ No suitable candidates found."
-            state["next_agent"] = "END"
-            return state
-        
-        response = f"🎯 MATCHING RESULTS\n"
-        response += "=" * 80 + "\n\n"
-        response += f"📝 YOUR REQUEST:\n\"{query}\"\n\n"
-        
-        if requirements:
-            response += "📋 UNDERSTOOD REQUIREMENTS:\n"
-            if requirements.get('role'):
-                response += f"   • Role: {requirements['role']}\n"
-            if requirements.get('experience_years'):
-                response += f"   • Experience: {requirements['experience_years']}+ years\n"
-            if requirements.get('skills_required'):
-                response += f"   • Skills: {', '.join(requirements['skills_required'])}\n"
-            if requirements.get('location'):
-                response += f"   • Location: {requirements['location']}\n"
-            if requirements.get('languages_explicit'):
-                response += f"   • Languages: {', '.join(requirements['languages_explicit'])}\n"
-            response += "\n"
-        
-        response += f"📊 TOP {min(5, len(candidates))} CANDIDATES:\n\n"
-        
-        for i, candidate in enumerate(candidates[:5], 1):
-            score_data = candidate.get('score_breakdown', {})
-            
-            response += "=" * 80 + "\n"
-            response += f"#{i} - {candidate.get('name', 'N/A')}\n"
-            response += "=" * 80 + "\n"
-            response += f"🎯 AI Score: {candidate.get('ai_score', 0):.1f}/100\n\n"
-            
-            response += "💼 PROFILE:\n"
-            response += f"   • Role: {candidate.get('current_role', 'N/A')}\n"
-            response += f"   • Experience: {candidate.get('years_experience', 0)} years\n"
-            response += f"   • Location: {candidate.get('location', 'N/A')}\n"
-            response += f"   • Education: {candidate.get('degree', 'N/A')} - {candidate.get('university', 'N/A')}\n\n"
-            
-            response += "🛠️ SKILLS:\n"
-            response += f"   • {', '.join(candidate.get('skills', [])[:8])}\n\n"
-            
-            if candidate.get('all_languages'):
-                response += "🌍 LANGUAGES:\n"
-                response += f"   • {', '.join(set(candidate.get('all_languages', [])))}\n\n"
-            
-            response += "🤖 AI ANALYSIS:\n"
-            response += f"   • {score_data.get('reasoning', 'Good match')}\n\n"
-            
-            response += "📧 CONTACT:\n"
-            response += f"   • Email: {candidate.get('email', 'N/A')}\n"
-            response += f"   • Phone: {candidate.get('phone', 'N/A')}\n\n\n"
-        
-        if candidates:
-            top = candidates[0]
-            response += "=" * 80 + "\n"
-            response += "🤖 AI RECOMMENDATION:\n\n"
-            response += f"**TOP CHOICE: {top.get('name')}**\n"
-            response += f"Score: {top.get('ai_score', 0):.1f}/100\n\n"
-            response += f"{top.get('score_breakdown', {}).get('reasoning', 'Best match')}\n"
-        
-        state["final_recommendation"] = response
         state["next_agent"] = "END"
         return state
 
 
-# ============== LANGGRAPH CONSTRUCTION ==============
+# ============== CREATE LANGGRAPH ==============
 def create_arytic_graph():
-    
-    parser = UniversalQueryParser(llm)
-    search = IntelligentSearchAgent(llm, qdrant_client, embeddings)
-    enhancement = CandidateEnhancementAgent(llm)
-    scoring = IntelligentScoringAgent(llm)
-    ranking = FinalRankingAgent(llm)
+    query_agent = QueryUnderstandingAgent(llm)
+    search_agent = IntelligentSearchAgent(qdrant_client, embeddings)
+    matching_agent = IntelligentMatchingAgent(llm)
     
     workflow = StateGraph(AgentState)
     
-    workflow.add_node("parser", parser)
-    workflow.add_node("search", search)
-    workflow.add_node("enhancement", enhancement)
-    workflow.add_node("scoring", scoring)
-    workflow.add_node("ranking", ranking)
+    workflow.add_node("query", query_agent)
+    workflow.add_node("search", search_agent)
+    workflow.add_node("analysis", matching_agent)
     
-    workflow.set_entry_point("parser")
-    
-    workflow.add_edge("parser", "search")
+    workflow.set_entry_point("query")
+    workflow.add_edge("query", "search")
     
     def route_from_search(state):
-        return state.get("next_agent", "enhancement")
+        return state.get("next_agent", "analysis")
     
     workflow.add_conditional_edges(
         "search",
         route_from_search,
         {
-            "enhancement": "enhancement",
+            "analysis": "analysis",
             END: END
         }
     )
     
-    workflow.add_edge("enhancement", "scoring")
-    workflow.add_edge("scoring", "ranking")
-    workflow.add_edge("ranking", END)
+    workflow.add_edge("analysis", END)
     
     return workflow.compile()
 
 arytic_graph = create_arytic_graph()
 
-# ============== OPTIMIZED RESUME PROCESSING ==============
+
+# ============== DOCUMENT PROCESSING ==============
 
 def extract_text_from_pdf(file_path: str) -> str:
     try:
@@ -617,109 +610,8 @@ def extract_text_from_docx(file_path: str) -> str:
         return f"Error: {str(e)}"
 
 
-class ResumeExtractionAgent:
-    """OPTIMIZED: Shorter prompts, faster extraction"""
-    
-    def __init__(self, llm):
-        self.llm = llm
-        self.name = "🤖 Resume Extraction"
-    
-    def extract_resume_data(self, text: str, filename: str) -> dict:
-        """OPTIMIZED: Shorter context, faster extraction"""
-        
-        # OPTIMIZED: Use only first 1500 chars (was 3000)
-        text_sample = text[:1500]
-        
-        # OPTIMIZED: Much shorter prompt
-        extraction_prompt = f"""Extract key info from this resume. Return ONLY JSON.
-
-RESUME:
-{text_sample}
-
-Extract:
-- name (usually first line)
-- email
-- phone
-- location (city, state)
-- current_role (latest job)
-- years_experience (calculate from dates)
-- previous_companies (list of employers)
-- skills (ALL: tech skills AND languages)
-- degree
-- university
-
-JSON format:
-{{
-  "name": "Full Name",
-  "email": "email@example.com",
-  "phone": "123-456-7890",
-  "location": "City, State",
-  "current_role": "Job Title",
-  "years_experience": 5,
-  "previous_companies": ["Company1", "Company2"],
-  "skills": ["Python", "AWS", "Japanese", "English"],
-  "degree": "Master of Science",
-  "university": "University Name",
-  "graduation_year": "2015"
-}}
-
-JSON only."""
-
-        try:
-            result = self.llm.invoke(extraction_prompt)
-            result_text = result.content if hasattr(result, 'content') else str(result)
-            
-            result_text = result_text.strip()
-            if result_text.startswith('```'):
-                result_text = result_text.replace('```json', '').replace('```', '').strip()
-            
-            start_idx = result_text.find('{')
-            end_idx = result_text.rfind('}')
-            
-            if start_idx != -1 and end_idx != -1:
-                json_str = result_text[start_idx:end_idx+1]
-                data = json.loads(json_str)
-                
-                print(f"   ✅ Extracted: {data.get('name', 'Unknown')}")
-                return data
-            else:
-                return None
-                
-        except Exception as e:
-            print(f"   ⚠️ Extraction error: {e}")
-            return self.extract_minimal_data(text, filename)
-    
-    def extract_minimal_data(self, text: str, filename: str) -> dict:
-        """Quick fallback extraction"""
-        
-        # Try to extract email with regex
-        email_match = re.search(r'[\w\.-]+@[\w\.-]+\.\w+', text[:500])
-        email = email_match.group(0) if email_match else "N/A"
-        
-        # Try to extract phone
-        phone_match = re.search(r'[\+\(]?\d[\d\-\.\s\(\)]{7,}\d', text[:500])
-        phone = phone_match.group(0) if phone_match else "N/A"
-        
-        # Use filename as name fallback
-        name = filename.replace('.pdf', '').replace('.docx', '').replace('_', ' ').replace('-', ' ').strip().title()
-        
-        return {
-            "name": name,
-            "email": email,
-            "phone": phone,
-            "location": "N/A",
-            "current_role": "See resume",
-            "years_experience": 0,
-            "previous_companies": [],
-            "skills": ["See resume"],
-            "degree": "N/A",
-            "university": "N/A",
-            "graduation_year": "N/A"
-        }
-
-
 async def process_resume_intelligent(file_content: bytes, filename: str, extension: str):
-    """OPTIMIZED: Faster resume processing"""
+    """Process resume with intelligent LLM extraction"""
     try:
         file_id = str(uuid.uuid4())
         file_path = os.path.join(UPLOAD_DIR, f"{file_id}{extension}")
@@ -727,7 +619,6 @@ async def process_resume_intelligent(file_content: bytes, filename: str, extensi
         with open(file_path, "wb") as f:
             f.write(file_content)
         
-        # Extract text
         loop = asyncio.get_event_loop()
         if extension == '.pdf':
             text = await loop.run_in_executor(executor, extract_text_from_pdf, file_path)
@@ -742,8 +633,8 @@ async def process_resume_intelligent(file_content: bytes, filename: str, extensi
         
         print(f"📄 Processing: {filename}")
         
-        # OPTIMIZED: Faster AI extraction
-        extraction_agent = ResumeExtractionAgent(llm)
+        # Use intelligent extraction agent
+        extraction_agent = IntelligentExtractionAgent(llm)
         resume_data = await loop.run_in_executor(
             executor, 
             extraction_agent.extract_resume_data, 
@@ -751,33 +642,26 @@ async def process_resume_intelligent(file_content: bytes, filename: str, extensi
             filename
         )
         
-        if not resume_data:
-            resume_data = extraction_agent.extract_minimal_data(text, filename)
-        
-        # Build resume info
         resume_info = {
             "id": file_id,
             "filename": filename,
-            "name": str(resume_data.get("name", "Unknown")).strip(),
-            "email": str(resume_data.get("email", "N/A")).strip(),
-            "phone": str(resume_data.get("phone", "N/A")).strip(),
-            "location": str(resume_data.get("location", "N/A")).strip(),
-            "current_role": str(resume_data.get("current_role", "N/A")).strip(),
-            "years_experience": int(resume_data.get("years_experience", 0)) if isinstance(resume_data.get("years_experience"), (int, float)) else 0,
-            "previous_companies": resume_data.get("previous_companies", [])[:10] if isinstance(resume_data.get("previous_companies"), list) else [],
-            "skills": resume_data.get("skills", [])[:25] if isinstance(resume_data.get("skills"), list) else [],
-            "certifications": resume_data.get("certifications", [])[:10] if isinstance(resume_data.get("certifications"), list) else [],
-            "degree": str(resume_data.get("degree", "N/A")).strip(),
-            "university": str(resume_data.get("university", "N/A")).strip(),
-            "graduation_year": str(resume_data.get("graduation_year", "N/A")).strip(),
+            **resume_data,
             "uploaded_at": datetime.now().isoformat()
         }
         
-        # Create embedding with key data only
-        embedding_text = f"{resume_info['name']} {resume_info['current_role']} {' '.join(resume_info['skills'][:10])} {resume_info['university']} {resume_info['location']}"
+        # Create rich embedding from extracted data
+        embedding_text = f"""
+        {resume_info['name']} {resume_info['current_role']} 
+        Skills: {' '.join(resume_info['skills'][:20])}
+        Certifications: {' '.join(resume_info['certifications'])}
+        Location: {resume_info['location']}
+        Experience: {resume_info['years_experience']} years
+        Education: {resume_info['degree']} {resume_info['university']}
+        Companies: {' '.join(resume_info['previous_companies'][:3])}
+        """.strip()
+        
         embedding = await loop.run_in_executor(executor, embeddings.embed_query, embedding_text)
         
-        # Store in Qdrant
         point = PointStruct(
             id=file_id,
             vector=embedding,
@@ -798,21 +682,16 @@ async def process_resume_intelligent(file_content: bytes, filename: str, extensi
 async def root():
     collection_info = qdrant_client.get_collection(COLLECTION_NAME)
     return {
-        "message": "Arytic - CPU Optimized",
-        "version": "2.0 - Speed Optimized",
-        "optimizations": [
-            "✅ Batch LLM processing (7x faster)",
-            "✅ Process only top 5 candidates",
-            "✅ Reduced context windows (1024 tokens)",
-            "✅ Simplified prompts",
-            "✅ Parallel resume uploads"
+        "message": "Arytic - Intelligent Resume RAG",
+        "version": "6.0",
+        "features": [
+            "✅ LLM-driven extraction - learns from resume structure",
+            "✅ 3 specialized agents (Query, Search, Matching)",
+            "✅ Semantic search with embeddings",
+            "✅ Intelligent matching with reasoning",
+            "✅ Context-aware ranking",
+            "✅ No hardcoded patterns"
         ],
-        "performance": {
-            "query_time": "2-5 minutes (was 15+ min)",
-            "candidates_enhanced": MAX_CANDIDATES_TO_ENHANCE,
-            "candidates_scored": MAX_CANDIDATES_TO_SCORE,
-            "context_size": CONTEXT_SIZE
-        },
         "stats": {
             "total_resumes": collection_info.points_count,
             "status": "operational"
@@ -821,12 +700,11 @@ async def root():
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
-    """OPTIMIZED: Faster query processing"""
+    """Process hiring queries"""
     conversation_id = request.conversation_id or str(uuid.uuid4())
     
     print(f"\n{'='*80}")
-    print(f"🚀 ARYTIC OPTIMIZED QUERY")
-    print(f"Query: {request.message}")
+    print(f"🚀 QUERY: {request.message}")
     print(f"{'='*80}")
     
     try:
@@ -835,57 +713,133 @@ async def chat(request: ChatRequest):
             user_query=request.message,
             parsed_requirements={},
             search_results=[],
-            enhanced_candidates=[],
-            scored_candidates=[],
+            analyzed_candidates=[],
             final_recommendation="",
-            next_agent="parser",
+            next_agent="query",
             execution_log=[]
         )
         
         final_state = arytic_graph.invoke(initial_state)
         
-        response = final_state.get("final_recommendation", "I couldn't process your query.")
+        candidates = final_state.get("analyzed_candidates", [])
+        requirements = final_state.get("parsed_requirements", {})
         
-        agent_flow = ["Query Parser", "Search", "Batch Enhancement", "Batch Scoring", "Ranking"]
+        if not candidates:
+            response = "❌ No matching candidates found."
+        else:
+            response = generate_response(request.message, requirements, candidates)
         
         print(f"\n{'='*80}")
-        print(f"✅ COMPLETE")
-        print(f"Candidates: {len(final_state.get('scored_candidates', []))}")
+        print(f"✅ Found {len(candidates)} candidates")
         print(f"{'='*80}\n")
         
         return ChatResponse(
             response=response,
             conversation_id=conversation_id,
-            agent_flow=agent_flow,
             execution_details={
-                "is_jd_query": len(request.message.split()) > 15,
-                "requirements": final_state.get("parsed_requirements", {}),
-                "candidates_analyzed": len(final_state.get("scored_candidates", [])),
-                "agents_involved": 5,
-                "execution_log": final_state.get("execution_log", []),
-                "optimizations_applied": [
-                    "Batch enhancement (1 LLM call)",
-                    "Batch scoring (1 LLM call)",
-                    f"Top {MAX_CANDIDATES_TO_ENHANCE} enhanced",
-                    f"Top {MAX_CANDIDATES_TO_SCORE} scored"
-                ]
+                "requirements": requirements,
+                "candidates_found": len(candidates),
+                "execution_log": final_state.get("execution_log", [])
             }
         )
         
     except Exception as e:
         print(f"❌ Error: {e}")
-        import traceback
-        traceback.print_exc()
         return ChatResponse(
             response=f"Error: {str(e)}",
             conversation_id=conversation_id,
-            agent_flow=["Error"],
             execution_details={"error": str(e)}
         )
 
+
+def generate_response(query: str, requirements: dict, candidates: list) -> str:
+    """Generate detailed response"""
+    
+    response = f"🎯 MATCHING RESULTS\n{'='*80}\n\n"
+    response += f"📝 Query: \"{query}\"\n\n"
+    
+    if requirements:
+        response += "🔍 Requirements:\n"
+        for key, value in requirements.items():
+            if value:
+                response += f"   • {key}: {value}\n"
+        response += "\n"
+    
+    response += f"👥 TOP {min(len(candidates), TOP_CANDIDATES)} CANDIDATES:\n\n"
+    
+    for i, c in enumerate(candidates[:TOP_CANDIDATES], 1):
+        response += f"{'='*80}\n"
+        response += f"#{i} - {c.get('name', 'N/A')}\n"
+        response += f"{'='*80}\n"
+        response += f"🎯 Match Score: {c.get('match_score', 0)}/100\n\n"
+        
+        response += "💼 Profile:\n"
+        response += f"   • Role: {c.get('current_role', 'N/A')}\n"
+        response += f"   • Experience: {c.get('years_experience', 0)} years\n"
+        response += f"   • Location: {c.get('location', 'N/A')}\n"
+        response += f"   • Education: {c.get('degree', 'N/A')}"
+        if c.get('university') != 'N/A':
+            response += f" - {c.get('university')}\n"
+        else:
+            response += "\n"
+        
+        if c.get('previous_companies'):
+            response += f"   • Companies: {', '.join(c.get('previous_companies', [])[:3])}\n"
+        response += "\n"
+        
+        if c.get('skills'):
+            response += "🛠️ Skills:\n"
+            skills = c.get('skills', [])[:15]
+            response += f"   {', '.join(skills)}\n"
+            if len(c.get('skills', [])) > 15:
+                response += f"   ... and {len(c.get('skills', [])) - 15} more\n"
+            response += "\n"
+        
+        if c.get('certifications'):
+            response += "📜 Certifications:\n"
+            response += f"   • {', '.join(c.get('certifications', []))}\n\n"
+        
+        if c.get('matched_skills'):
+            response += "✅ Matched Skills:\n"
+            response += f"   • {', '.join(c.get('matched_skills', []))}\n\n"
+        
+        if c.get('why_match'):
+            response += "💡 Why Good Match:\n"
+            response += f"   {c.get('why_match')}\n\n"
+        
+        if c.get('reasoning'):
+            response += "🤖 Analysis:\n"
+            response += f"   {c.get('reasoning')}\n\n"
+        
+        if c.get('concerns'):
+            response += "⚠️ Considerations:\n"
+            for concern in c.get('concerns', []):
+                response += f"   • {concern}\n"
+            response += "\n"
+        
+        response += "📧 Contact:\n"
+        response += f"   • Email: {c.get('email', 'N/A')}\n"
+        response += f"   • Phone: {c.get('phone', 'N/A')}\n\n"
+    
+    # Top recommendation
+    if candidates:
+        top = candidates[0]
+        response += f"{'='*80}\n"
+        response += "🏆 TOP RECOMMENDATION\n"
+        response += f"{'='*80}\n\n"
+        response += f"**{top.get('name')}** - Score: {top.get('match_score', 0)}/100\n\n"
+        
+        if top.get('why_match'):
+            response += f"**Why?** {top.get('why_match')}\n\n"
+        
+        response += f"**Contact:** {top.get('email', 'N/A')}\n"
+    
+    return response
+
+
 @app.post("/upload", response_model=UploadResponse)
 async def upload_resumes(files: List[UploadFile] = File(...)):
-    """OPTIMIZED: Parallel resume processing"""
+    """Upload and process resumes"""
     print(f"\n📤 Uploading {len(files)} resumes...")
     
     file_data = []
@@ -936,16 +890,9 @@ async def get_stats():
         collection_info = qdrant_client.get_collection(COLLECTION_NAME)
         return {
             "total_resumes": collection_info.points_count,
-            "architecture": "CPU Optimized - Batch Processing",
-            "agents": 5,
-            "status": "operational",
-            "optimizations": {
-                "batch_processing": True,
-                "candidates_enhanced": MAX_CANDIDATES_TO_ENHANCE,
-                "candidates_scored": MAX_CANDIDATES_TO_SCORE,
-                "context_size": CONTEXT_SIZE,
-                "expected_query_time": "2-5 minutes"
-            }
+            "architecture": "LLM-driven RAG (3 Agents)",
+            "model": OLLAMA_MODEL,
+            "status": "operational"
         }
     except Exception as e:
         return {"total_resumes": 0, "status": "error", "message": str(e)}
@@ -966,33 +913,32 @@ async def health():
     return {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
-        "system": "Arytic CPU Optimized",
-        "version": "2.0"
+        "system": "Arytic Intelligent RAG",
+        "version": "6.0"
     }
 
 @app.on_event("startup")
 async def startup():
     print("\n" + "="*80)
-    print("🚀 ARYTIC - CPU OPTIMIZED VERSION")
+    print("🚀 ARYTIC - INTELLIGENT RESUME RAG")
     print("="*80)
     
-    print("\n⚡ SPEED OPTIMIZATIONS:")
-    print(f"   ✅ Batch Enhancement: Process {MAX_CANDIDATES_TO_ENHANCE} candidates in 1 LLM call")
-    print(f"   ✅ Batch Scoring: Score {MAX_CANDIDATES_TO_SCORE} candidates in 1 LLM call")
-    print(f"   ✅ Reduced Context: {CONTEXT_SIZE} tokens (faster inference)")
-    print(f"   ✅ Smaller Search Pool: {MAX_SEARCH_RESULTS} candidates (was 50)")
-    print(f"   ✅ Parallel Uploads: {MAX_CONCURRENT_UPLOADS} resumes at once")
+    print("\n⚡ KEY FEATURES:")
+    print(f"   ✅ LLM-driven extraction - learns from resume structure")
+    print(f"   ✅ No hardcoded patterns - agent understands context")
+    print(f"   ✅ 3 Specialized Agents:")
+    print(f"      1️⃣  Query Understanding - extracts requirements")
+    print(f"      2️⃣  Intelligent Search - semantic matching")
+    print(f"      3️⃣  Intelligent Matching - explains fit with reasoning")
+    print(f"   ✅ Rich embeddings from all extracted fields")
+    print(f"   ✅ Context-aware ranking and scoring")
     
-    print("\n📊 EXPECTED PERFORMANCE:")
-    print("   • Query Time: 2-5 minutes (was 15+ minutes)")
-    print("   • Resume Upload: ~30 sec per resume")
-    print("   • Total Speedup: 3-7x faster")
-    
-    print(f"\n🔧 System Configuration:")
-    print(f"   • CPU Threads: {CPU_THREADS}")
-    print(f"   • Context Window: {CONTEXT_SIZE} tokens")
-    print(f"   • GPU: Disabled (CPU only)")
+    print(f"\n🔧 Configuration:")
     print(f"   • Model: {OLLAMA_MODEL}")
+    print(f"   • Temperature: 0.1 (balanced accuracy)")
+    print(f"   • CPU Threads: {CPU_THREADS}")
+    print(f"   • Context: {CONTEXT_SIZE} tokens")
+    print(f"   • Embedding Model: {EMBEDDING_MODEL}")
     
     print(f"\n🤖 Testing Ollama...")
     try:
@@ -1001,24 +947,17 @@ async def startup():
     except Exception as e:
         print(f"   ⚠️ Ollama issue: {e}")
         print(f"   💡 Run: ollama serve")
-        print(f"   💡 Run: ollama pull {OLLAMA_MODEL}")
     
-    print("\n🔄 Agent Workflow:")
-    print("   1️⃣ Query Parser (1 LLM call)")
-    print("   2️⃣ Semantic Search (no LLM)")
-    print(f"   3️⃣ Batch Enhancement (1 LLM call for {MAX_CANDIDATES_TO_ENHANCE})")
-    print(f"   4️⃣ Batch Scoring (1 LLM call for {MAX_CANDIDATES_TO_SCORE})")
-    print("   5️⃣ Final Ranking (formatting)")
-    print("\n   TOTAL: 3 LLM calls (was 26+)")
+    print(f"\n🧠 Testing Embeddings...")
+    try:
+        test_emb = embeddings.embed_query("test")
+        print(f"   ✅ Embeddings working (dim: {len(test_emb)})")
+    except Exception as e:
+        print(f"   ⚠️ Embeddings issue: {e}")
     
     print("\n" + "="*80)
-    print("✨ SAMPLE QUERIES:")
-    print("   • 'find Python developers'")
-    print("   • 'senior engineer in Texas with 5 years React'")
-    print("   • 'bilingual Japanese developer for Tokyo office'")
-    print("="*80)
-    print(f"🌐 Server: http://127.0.0.1:8000")
-    print(f"📊 Qdrant: {QDRANT_URL}")
+    print("🌐 Server: http://127.0.0.1:8000")
+    print("📚 Docs: http://127.0.0.1:8000/docs")
     print("="*80 + "\n")
 
 if __name__ == "__main__":
