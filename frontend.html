@@ -3,786 +3,567 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Arytic - Intelligent AI Recruiting</title>
+    <title>Arytic - Intelligent Talent Matching</title>
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        
-        body { 
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
             padding: 20px;
         }
-        
-        .container { 
-            max-width: 1200px; 
-            width: 100%;
-            background: white;
-            border-radius: 24px;
-            box-shadow: 0 25px 70px rgba(0,0,0,0.4);
-            overflow: hidden;
-            display: flex;
-            flex-direction: column;
-            height: 92vh;
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
         }
-        
-        .header { 
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+
+        .header {
+            text-align: center;
             color: white;
-            padding: 24px 30px;
+            margin-bottom: 30px;
         }
-        
-        .header h1 { 
-            font-size: 26px;
-            margin-bottom: 8px;
-            display: flex;
-            align-items: center;
-            gap: 12px;
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
         }
-        
-        .header .subtitle {
-            opacity: 0.95;
-            font-size: 14px;
-            margin-bottom: 16px;
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
         }
-        
-        .agent-flow {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            padding: 12px 16px;
-            background: rgba(255,255,255,0.12);
-            border-radius: 12px;
-            font-size: 11px;
-            margin-bottom: 12px;
-            flex-wrap: wrap;
+
+        .features {
+            background: rgba(255,255,255,0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 20px;
+            color: white;
         }
-        
-        .agent-badge {
-            padding: 6px 12px;
-            background: rgba(255,255,255,0.2);
-            border-radius: 16px;
-            font-size: 11px;
-            font-weight: 500;
-            display: flex;
-            align-items: center;
-            gap: 5px;
-            animation: fadeIn 0.4s ease-in;
+
+        .features h3 {
+            margin-bottom: 15px;
         }
-        
-        .agent-badge.active {
-            background: rgba(34, 197, 94, 0.3);
-            animation: pulse 1.5s infinite;
-        }
-        
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.6; }
-        }
-        
-        .arrow {
-            opacity: 0.6;
-            font-size: 14px;
-        }
-        
-        .stats-grid {
+
+        .features ul {
+            list-style: none;
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
             gap: 10px;
         }
-        
-        .stat-card {
-            background: rgba(255,255,255,0.1);
-            padding: 12px;
-            border-radius: 10px;
-            text-align: center;
-        }
-        
-        .stat-value {
-            font-size: 22px;
+
+        .features li::before {
+            content: "✓ ";
+            color: #4ade80;
             font-weight: bold;
-            margin-bottom: 4px;
+            margin-right: 8px;
         }
-        
-        .stat-label {
-            font-size: 10px;
-            opacity: 0.85;
+
+        .main-content {
+            display: grid;
+            grid-template-columns: 350px 1fr;
+            gap: 20px;
         }
-        
+
+        .sidebar {
+            background: white;
+            border-radius: 15px;
+            padding: 20px;
+            height: fit-content;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+        }
+
         .chat-container {
-            flex: 1;
+            background: white;
+            border-radius: 15px;
+            padding: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
             display: flex;
             flex-direction: column;
-            overflow: hidden;
+            height: 700px;
         }
-        
-        .messages {
-            flex: 1;
-            overflow-y: auto;
-            padding: 28px;
-            background: #f8fafc;
+
+        .section-title {
+            font-size: 1.2em;
+            color: #667eea;
+            margin-bottom: 15px;
+            font-weight: 600;
         }
-        
-        .message {
+
+        .upload-area {
+            border: 2px dashed #667eea;
+            border-radius: 10px;
+            padding: 20px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
             margin-bottom: 20px;
-            display: flex;
-            animation: slideIn 0.3s ease-out;
         }
-        
-        @keyframes slideIn {
-            from { opacity: 0; transform: translateY(15px); }
-            to { opacity: 1; transform: translateY(0); }
+
+        .upload-area:hover {
+            background: #f0f4ff;
+            border-color: #764ba2;
         }
-        
-        .message.user {
-            justify-content: flex-end;
+
+        .upload-area.dragging {
+            background: #e0e7ff;
+            border-color: #667eea;
         }
-        
-        .message-wrapper {
-            display: flex;
-            gap: 12px;
-            max-width: 75%;
-            align-items: flex-start;
+
+        .file-input {
+            display: none;
         }
-        
-        .message.user .message-wrapper {
-            flex-direction: row-reverse;
+
+        .upload-icon {
+            font-size: 3em;
+            color: #667eea;
+            margin-bottom: 10px;
         }
-        
-        .avatar {
-            width: 40px;
-            height: 40px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 20px;
-            flex-shrink: 0;
+
+        .stats-box {
+            background: #f8fafc;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 15px;
         }
-        
-        .message.user .avatar {
-            background: linear-gradient(135deg, #667eea, #764ba2);
+
+        .stats-box h4 {
+            color: #475569;
+            font-size: 0.9em;
+            margin-bottom: 8px;
         }
-        
-        .message.bot .avatar {
-            background: linear-gradient(135deg, #10b981, #059669);
+
+        .stats-box .number {
+            font-size: 2em;
+            color: #667eea;
+            font-weight: bold;
         }
-        
-        .message-content {
-            padding: 16px 20px;
-            border-radius: 18px;
-            line-height: 1.6;
-            white-space: pre-wrap;
-            font-size: 14px;
+
+        .agent-info {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 15px;
+        }
+
+        .agent-info h4 {
+            margin-bottom: 10px;
+        }
+
+        .agent-info ul {
+            list-style: none;
+            font-size: 0.9em;
+        }
+
+        .agent-info li {
+            margin: 5px 0;
+            padding-left: 20px;
             position: relative;
         }
-        
-        .message.user .message-content {
-            background: linear-gradient(135deg, #667eea, #764ba2);
-            color: white;
-            border-bottom-right-radius: 6px;
+
+        .agent-info li::before {
+            content: "🤖";
+            position: absolute;
+            left: 0;
         }
-        
+
+        .messages-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            background: #f8fafc;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+
+        .message {
+            margin-bottom: 20px;
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .message.user {
+            text-align: right;
+        }
+
+        .message-content {
+            display: inline-block;
+            padding: 15px 20px;
+            border-radius: 15px;
+            max-width: 70%;
+            word-wrap: break-word;
+        }
+
+        .message.user .message-content {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-bottom-right-radius: 5px;
+        }
+
         .message.bot .message-content {
             background: white;
             color: #1e293b;
             border: 1px solid #e2e8f0;
-            border-bottom-left-radius: 6px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+            border-bottom-left-radius: 5px;
+            text-align: left;
         }
-        
-        .execution-details {
-            margin-top: 12px;
+
+        .message-meta {
+            font-size: 0.8em;
+            color: #94a3b8;
+            margin-top: 5px;
+        }
+
+        .reasoning-box {
+            background: #fff7ed;
+            border-left: 4px solid #f59e0b;
+            padding: 10px 15px;
+            margin: 10px 0;
+            border-radius: 5px;
+            font-size: 0.9em;
+        }
+
+        .reasoning-box h5 {
+            color: #b45309;
+            margin-bottom: 8px;
+        }
+
+        .candidate-card {
+            background: #f0f9ff;
+            border: 1px solid #bae6fd;
+            border-radius: 8px;
             padding: 12px;
-            background: #f1f5f9;
-            border-radius: 10px;
-            font-size: 12px;
-            border-left: 3px solid #667eea;
+            margin: 8px 0;
         }
-        
-        .execution-details-title {
-            font-weight: bold;
-            color: #667eea;
-            margin-bottom: 6px;
-            font-size: 11px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
+
+        .candidate-card h6 {
+            color: #0369a1;
+            margin-bottom: 5px;
         }
-        
-        .execution-metric {
-            display: flex;
-            justify-content: space-between;
-            padding: 4px 0;
-            color: #475569;
-        }
-        
-        .execution-log {
-            margin-top: 8px;
-            padding-top: 8px;
-            border-top: 1px solid #cbd5e1;
-            max-height: 120px;
-            overflow-y: auto;
-        }
-        
-        .log-entry {
-            padding: 3px 0;
-            font-size: 11px;
-            color: #64748b;
-        }
-        
-        .typing-indicator {
-            display: none;
-            padding: 14px 20px;
-            background: white;
-            border-radius: 18px;
-            border-bottom-left-radius: 6px;
-            max-width: 80px;
-            border: 1px solid #e2e8f0;
-            margin-left: 52px;
-        }
-        
-        .typing-indicator.active {
-            display: inline-block;
-        }
-        
-        .typing-indicator span {
-            height: 9px;
-            width: 9px;
-            background: #10b981;
-            border-radius: 50%;
-            display: inline-block;
-            margin-right: 5px;
-            animation: typing 1.4s infinite;
-        }
-        
-        .typing-indicator span:nth-child(2) {
-            animation-delay: 0.2s;
-        }
-        
-        .typing-indicator span:nth-child(3) {
-            animation-delay: 0.4s;
-        }
-        
-        @keyframes typing {
-            0%, 60%, 100% { transform: translateY(0); opacity: 0.7; }
-            30% { transform: translateY(-10px); opacity: 1; }
-        }
-        
+
         .input-area {
-            padding: 20px 28px;
-            background: white;
-            border-top: 1px solid #e2e8f0;
-        }
-        
-        .quick-actions {
-            display: flex;
-            gap: 8px;
-            margin-bottom: 14px;
-            flex-wrap: wrap;
-        }
-        
-        .quick-action {
-            padding: 8px 16px;
-            background: #f1f5f9;
-            border: 1px solid #e2e8f0;
-            border-radius: 20px;
-            cursor: pointer;
-            font-size: 13px;
-            transition: all 0.25s;
-            font-weight: 500;
-        }
-        
-        .quick-action:hover {
-            background: linear-gradient(135deg, #667eea, #764ba2);
-            color: white;
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
-        }
-        
-        .input-form {
             display: flex;
             gap: 10px;
         }
-        
-        .input-form textarea {
+
+        .message-input {
             flex: 1;
-            padding: 14px 20px;
+            padding: 15px;
             border: 2px solid #e2e8f0;
-            border-radius: 16px;
-            font-size: 14px;
+            border-radius: 25px;
+            font-size: 1em;
             outline: none;
             transition: all 0.3s;
-            font-family: inherit;
-            resize: none;
-            min-height: 50px;
-            max-height: 120px;
         }
-        
-        .input-form textarea:focus {
+
+        .message-input:focus {
             border-color: #667eea;
             box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
         }
-        
-        .send-btn {
-            padding: 14px 28px;
-            background: linear-gradient(135deg, #667eea, #764ba2);
-            color: white;
+
+        .send-button, .upload-button {
+            padding: 15px 30px;
             border: none;
-            border-radius: 24px;
-            cursor: pointer;
+            border-radius: 25px;
+            font-size: 1em;
             font-weight: 600;
-            font-size: 14px;
-            transition: all 0.25s;
-            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
-            align-self: flex-end;
-        }
-        
-        .send-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
-        }
-        
-        .send-btn:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-            transform: none;
-        }
-        
-        .welcome {
-            text-align: center;
-            padding: 50px 30px;
-            color: #64748b;
-        }
-        
-        .welcome h2 {
-            color: #667eea;
-            margin-bottom: 16px;
-            font-size: 24px;
-        }
-        
-        .welcome p {
-            margin-bottom: 10px;
-            font-size: 14px;
-            line-height: 1.6;
-        }
-        
-        .feature-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-            gap: 16px;
-            margin: 30px 0;
-        }
-        
-        .feature-card {
-            padding: 20px;
-            background: linear-gradient(135deg, #f8fafc, #f1f5f9);
-            border-radius: 14px;
-            border: 1px solid #e2e8f0;
-            text-align: left;
-        }
-        
-        .feature-icon {
-            font-size: 32px;
-            margin-bottom: 10px;
-        }
-        
-        .feature-title {
-            font-weight: 600;
-            color: #1e293b;
-            margin-bottom: 6px;
-            font-size: 14px;
-        }
-        
-        .feature-desc {
-            font-size: 12px;
-            color: #64748b;
-            line-height: 1.5;
-        }
-        
-        .upload-section {
-            margin-top: 30px;
-            padding: 30px;
-            border: 3px dashed #667eea;
-            border-radius: 16px;
-            background: linear-gradient(135deg, #f5f3ff, #ede9fe);
             cursor: pointer;
             transition: all 0.3s;
         }
-        
-        .upload-section:hover {
-            background: linear-gradient(135deg, #ede9fe, #ddd6fe);
-            border-color: #5b21b6;
-            transform: scale(1.02);
+
+        .send-button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
         }
-        
-        .upload-status {
-            margin-top: 14px;
-            padding: 12px;
-            border-radius: 10px;
-            font-size: 13px;
-            font-weight: 500;
-            display: none;
+
+        .send-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
         }
-        
-        .upload-status.success {
-            background: #d1fae5;
-            color: #065f46;
-            display: block;
+
+        .send-button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
         }
-        
-        .upload-status.processing {
-            background: #dbeafe;
-            color: #1e40af;
-            display: block;
+
+        .upload-button {
+            background: #4ade80;
+            color: white;
+            width: 100%;
+            margin-top: 10px;
         }
-        
-        .upload-status.error {
-            background: #fee2e2;
-            color: #991b1b;
-            display: block;
+
+        .upload-button:hover {
+            background: #22c55e;
+        }
+
+        .loading {
+            display: inline-block;
+        }
+
+        .loading::after {
+            content: '...';
+            animation: dots 1.5s steps(4, end) infinite;
+        }
+
+        @keyframes dots {
+            0%, 20% { content: '.'; }
+            40% { content: '..'; }
+            60%, 100% { content: '...'; }
         }
 
         .example-queries {
-            margin-top: 30px;
-            padding: 20px;
-            background: linear-gradient(135deg, #fef3c7, #fde68a);
-            border-radius: 12px;
-            border-left: 4px solid #f59e0b;
-        }
-
-        .example-queries h3 {
-            color: #92400e;
-            margin-bottom: 12px;
-            font-size: 15px;
+            margin-top: 15px;
         }
 
         .example-query {
-            background: white;
-            padding: 12px;
-            margin: 8px 0;
+            background: #f1f5f9;
+            padding: 8px 12px;
             border-radius: 8px;
-            font-size: 13px;
-            color: #1f2937;
+            margin: 5px 0;
             cursor: pointer;
-            transition: all 0.2s;
+            font-size: 0.9em;
+            transition: all 0.3s;
         }
 
         .example-query:hover {
+            background: #e0e7ff;
             transform: translateX(5px);
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
         }
 
-        .example-query strong {
-            color: #667eea;
+        .agent-thinking {
+            background: #fef3c7;
+            border: 1px solid #fbbf24;
+            border-radius: 10px;
+            padding: 15px;
+            margin: 10px 0;
+        }
+
+        .agent-thinking h5 {
+            color: #92400e;
+            margin-bottom: 10px;
+        }
+
+        .thinking-step {
+            margin: 5px 0;
+            padding-left: 20px;
+            position: relative;
+            color: #78350f;
+        }
+
+        .thinking-step::before {
+            content: "🧠";
+            position: absolute;
+            left: 0;
+        }
+
+        @media (max-width: 968px) {
+            .main-content {
+                grid-template-columns: 1fr;
+            }
         }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>
-                🎯 Arytic AI Recruiting
-                <span style="font-size: 12px; background: rgba(255,255,255,0.2); padding: 4px 10px; border-radius: 12px; font-weight: normal;">Universal</span>
-            </h1>
-            <div class="subtitle">Universal Query Understanding • AI Language Inference • Cultural Intelligence</div>
-            
-            <div class="agent-flow">
-                <span style="opacity: 0.9; font-weight: 600;">AI Agent Flow:</span>
-                <div class="agent-badge" id="parser-badge">🧠 Parser</div>
-                <span class="arrow">→</span>
-                <div class="agent-badge" id="search-badge">🔍 Search</div>
-                <span class="arrow">→</span>
-                <div class="agent-badge" id="enhance-badge">✨ Enhance</div>
-                <span class="arrow">→</span>
-                <div class="agent-badge" id="score-badge">🎯 Score</div>
-                <span class="arrow">→</span>
-                <div class="agent-badge" id="rank-badge">🏆 Rank</div>
-            </div>
-            
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <div class="stat-value" id="totalResumes">0</div>
-                    <div class="stat-label">Total Resumes</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-value" id="totalMessages">0</div>
-                    <div class="stat-label">Queries Processed</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-value" id="agentsCount">5</div>
-                    <div class="stat-label">AI Agents</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-value" id="systemStatus">🟢</div>
-                    <div class="stat-label">System Status</div>
-                </div>
-            </div>
+            <h1>🚀 Arytic Intelligent Talent Matching</h1>
+            <p>AI-Powered Candidate Discovery with Multi-Agent Intelligence</p>
         </div>
 
-        <div class="chat-container">
-            <div class="messages" id="messages">
-                <div class="welcome">
-                    <h2>🚀 Universal AI Recruiting Intelligence</h2>
-                    <p><strong>Ask ANY hiring question - Our AI agents figure it out!</strong></p>
-                    
-                    <div class="feature-grid">
-                        <div class="feature-card">
-                            <div class="feature-icon">🧠</div>
-                            <div class="feature-title">Universal Understanding</div>
-                            <div class="feature-desc">Handles simple, complex, location-based, cultural - ANY query type</div>
-                        </div>
-                        <div class="feature-card">
-                            <div class="feature-icon">🌍</div>
-                            <div class="feature-title">Language Inference</div>
-                            <div class="feature-desc">AI infers: Studied in Japan → knows Japanese, Worked in Germany → knows German</div>
-                        </div>
-                        <div class="feature-card">
-                            <div class="feature-icon">✨</div>
-                            <div class="feature-title">Profile Enhancement</div>
-                            <div class="feature-desc">AI discovers hidden skills, cultural competencies, implied experience</div>
-                        </div>
-                        <div class="feature-card">
-                            <div class="feature-icon">🎯</div>
-                            <div class="feature-title">Intelligent Scoring</div>
-                            <div class="feature-desc">AI evaluates candidates with reasoning - no hardcoded rules</div>
-                        </div>
-                    </div>
-                    
-                    <div class="upload-section" onclick="document.getElementById('fileInput').click()">
-                        <input type="file" id="fileInput" multiple accept=".pdf,.docx" style="display: none;" onchange="uploadFiles()">
-                        <div style="font-size: 48px; margin-bottom: 12px;">📄</div>
-                        <p style="font-size: 18px; color: #667eea; font-weight: 600;">Upload Resumes</p>
-                        <p style="font-size: 13px; color: #64748b; margin-top: 8px;">PDF/DOCX • AI Extracts International Experience • Language Detection</p>
-                    </div>
-                    
-                    <div class="upload-status" id="uploadStatus"></div>
-                    
-                    <div class="example-queries">
-                        <h3>💡 Try ANY Type of Query:</h3>
-                        <div class="example-query" onclick="sendQuickMessage(this.textContent)">
-                            <strong>Simple:</strong> Find Python developers with 5 years experience
-                        </div>
-                        <div class="example-query" onclick="sendQuickMessage(this.textContent)">
-                            <strong>Location-based:</strong> Python developers in Texas or California with AWS skills
-                        </div>
-                        <div class="example-query" onclick="sendQuickMessage(this.textContent)">
-                            <strong>Cultural:</strong> Need bilingual engineer for Japanese clients, AWS certified, 8+ years
-                        </div>
-                        <div class="example-query" onclick="sendQuickMessage(this.textContent)">
-                            <strong>Implicit:</strong> Find someone who studied in Japan, knows machine learning, can work with Asian markets
-                        </div>
-                        <div class="example-query" onclick="sendQuickMessage(this.textContent)">
-                            <strong>Complex JD:</strong> Senior Data Scientist with PhD, 10+ years, machine learning expert, experience working with European clients, remote from anywhere
-                        </div>
+        <div class="features">
+            <h3>🎯 Intelligent Features</h3>
+            <ul>
+                <li>Job Description Analysis</li>
+                <li>Implicit Requirement Detection</li>
+                <li>Cultural & Language Inference</li>
+                <li>Geographic Intelligence</li>
+                <li>Technology Ecosystem Understanding</li>
+                <li>Explainable AI Recommendations</li>
+            </ul>
+        </div>
+
+        <div class="main-content">
+            <!-- Sidebar -->
+            <div class="sidebar">
+                <div class="section-title">📤 Upload Resumes</div>
+                <div class="upload-area" id="uploadArea">
+                    <div class="upload-icon">📄</div>
+                    <p><strong>Click or drag files here</strong></p>
+                    <p style="font-size: 0.9em; color: #64748b; margin-top: 10px;">
+                        Supports PDF, DOC, DOCX
+                    </p>
+                </div>
+                <input type="file" id="fileInput" class="file-input" multiple accept=".pdf,.doc,.docx">
+                <button class="upload-button" id="uploadButton">Upload Resumes</button>
+                
+                <div style="margin-top: 20px;">
+                    <div class="stats-box">
+                        <h4>Total Resumes</h4>
+                        <div class="number" id="totalResumes">0</div>
                     </div>
                 </div>
-                <div class="typing-indicator" id="typingIndicator">
-                    <span></span><span></span><span></span>
+
+                <div class="agent-info">
+                    <h4>🤖 Active Agents</h4>
+                    <ul>
+                        <li>Query Analyzer</li>
+                        <li>Candidate Intelligence</li>
+                        <li>Response Synthesizer</li>
+                    </ul>
+                </div>
+
+                <div class="example-queries">
+                    <div class="section-title">💡 Example Queries</div>
+                    <div class="example-query" data-query="Find a software developer who can work with Japanese clients">
+                        🇯🇵 Developer for Japanese clients
+                    </div>
+                    <div class="example-query" data-query="We need a senior data engineer with 5+ years experience in Python and AWS">
+                        🔧 Senior Data Engineer
+                    </div>
+                    <div class="example-query" data-query="Looking for project manager with PMP certification">
+                        📋 PMP Certified PM
+                    </div>
+                    <div class="example-query" data-query="Find candidates with experience in North Carolina">
+                        📍 North Carolina Experience
+                    </div>
                 </div>
             </div>
 
-            <div class="input-area">
-                <div class="quick-actions">
-                    <button class="quick-action" onclick="sendQuickMessage('Find Python developers with 5 years')">🐍 Python</button>
-                    <button class="quick-action" onclick="sendQuickMessage('developers in Texas')">📍 Texas</button>
-                    <button class="quick-action" onclick="sendQuickMessage('bilingual for Japanese clients')">🌐 Bilingual</button>
-                    <button class="quick-action" onclick="sendQuickMessage('studied in Japan')">🎓 Japan</button>
+            <!-- Chat Area -->
+            <div class="chat-container">
+                <div class="section-title">💬 Intelligent Chat</div>
+                <div class="messages-container" id="messagesContainer">
+                    <div class="message bot">
+                        <div class="message-content">
+                            <strong>👋 Welcome to Arytic!</strong><br><br>
+                            I'm an intelligent recruitment assistant powered by multiple AI agents. I can:
+                            <br><br>
+                            ✓ Understand job descriptions and extract requirements<br>
+                            ✓ Find candidates beyond keyword matching<br>
+                            ✓ Infer skills from experience (e.g., Tokyo education → Japanese language)<br>
+                            ✓ Assess cultural fit and international experience<br>
+                            ✓ Provide detailed reasoning for every recommendation<br>
+                            <br>
+                            <strong>Try asking me:</strong><br>
+                            • "Find developers who can work with Japanese clients"<br>
+                            • Paste a full job description<br>
+                            • "Who has experience in North Carolina?"<br>
+                            • "Senior engineer with 5+ years in Python"
+                        </div>
+                        <div class="message-meta">System • Just now</div>
+                    </div>
                 </div>
-                <form class="input-form" onsubmit="sendMessage(event)">
-                    <textarea id="userInput" placeholder="Ask anything: 'Python dev in Texas', 'bilingual for Japanese clients', full job description, or any hiring question..." rows="2"></textarea>
-                    <button type="submit" class="send-btn" id="sendBtn">Send 🚀</button>
-                </form>
+
+                <div class="input-area">
+                    <input 
+                        type="text" 
+                        class="message-input" 
+                        id="messageInput" 
+                        placeholder="Ask me anything... (e.g., 'Find a developer who can work with Japanese clients')"
+                    >
+                    <button class="send-button" id="sendButton">Send</button>
+                </div>
             </div>
         </div>
     </div>
 
     <script>
-        const API_BASE = 'http://localhost:8000';
-        let conversationId = null;
-        let messageCount = 0;
+        const API_URL = 'http://127.0.0.1:8000';
+        let isProcessing = false;
 
-        window.addEventListener('load', () => {
-            updateStats();
-            document.getElementById('userInput').focus();
-            setInterval(updateStats, 30000);
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            loadStats();
+            setupEventListeners();
         });
 
-        // Auto-resize textarea
-        const textarea = document.getElementById('userInput');
-        textarea.addEventListener('input', function() {
-            this.style.height = 'auto';
-            this.style.height = Math.min(this.scrollHeight, 120) + 'px';
-        });
+        function setupEventListeners() {
+            // File upload
+            const uploadArea = document.getElementById('uploadArea');
+            const fileInput = document.getElementById('fileInput');
+            const uploadButton = document.getElementById('uploadButton');
 
-        async function updateStats() {
+            uploadArea.addEventListener('click', () => fileInput.click());
+            
+            uploadArea.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                uploadArea.classList.add('dragging');
+            });
+
+            uploadArea.addEventListener('dragleave', () => {
+                uploadArea.classList.remove('dragging');
+            });
+
+            uploadArea.addEventListener('drop', (e) => {
+                e.preventDefault();
+                uploadArea.classList.remove('dragging');
+                fileInput.files = e.dataTransfer.files;
+            });
+
+            uploadButton.addEventListener('click', uploadFiles);
+
+            // Chat
+            const sendButton = document.getElementById('sendButton');
+            const messageInput = document.getElementById('messageInput');
+
+            sendButton.addEventListener('click', sendMessage);
+            messageInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter' && !isProcessing) {
+                    sendMessage();
+                }
+            });
+
+            // Example queries
+            document.querySelectorAll('.example-query').forEach(el => {
+                el.addEventListener('click', () => {
+                    messageInput.value = el.dataset.query;
+                    messageInput.focus();
+                });
+            });
+        }
+
+        async function loadStats() {
             try {
-                const response = await fetch(`${API_BASE}/stats`);
+                const response = await fetch(`${API_URL}/stats`);
                 const data = await response.json();
                 document.getElementById('totalResumes').textContent = data.total_resumes || 0;
-                document.getElementById('systemStatus').textContent = data.status === 'operational' ? '🟢' : '🔴';
             } catch (error) {
-                document.getElementById('systemStatus').textContent = '🔴';
+                console.error('Error loading stats:', error);
             }
-        }
-
-        async function sendMessage(event) {
-            event.preventDefault();
-            
-            const input = document.getElementById('userInput');
-            const message = input.value.trim();
-            
-            if (!message) return;
-
-            input.value = '';
-            input.style.height = 'auto';
-            addMessage('user', message);
-            messageCount++;
-            document.getElementById('totalMessages').textContent = messageCount;
-            
-            showTyping(true);
-            activateAgents();
-            const sendBtn = document.getElementById('sendBtn');
-            sendBtn.disabled = true;
-            
-            try {
-                const response = await fetch(`${API_BASE}/chat`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        message: message,
-                        conversation_id: conversationId
-                    })
-                });
-
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-
-                const data = await response.json();
-                conversationId = data.conversation_id;
-                
-                showTyping(false);
-                deactivateAgents();
-                addMessage('bot', data.response, data.execution_details);
-                messageCount++;
-                document.getElementById('totalMessages').textContent = messageCount;
-                
-                updateStats();
-
-            } catch (error) {
-                console.error('Chat error:', error);
-                showTyping(false);
-                deactivateAgents();
-                addMessage('bot', '❌ Connection error. Ensure API server is running on port 8000.');
-            } finally {
-                sendBtn.disabled = false;
-                input.focus();
-            }
-        }
-
-        function sendQuickMessage(message) {
-            const input = document.getElementById('userInput');
-            input.value = message;
-            input.style.height = 'auto';
-            input.style.height = Math.min(input.scrollHeight, 120) + 'px';
-            input.focus();
-        }
-
-        function addMessage(type, content, executionDetails = null) {
-            const messagesDiv = document.getElementById('messages');
-            
-            const welcome = messagesDiv.querySelector('.welcome');
-            if (welcome) welcome.remove();
-            
-            const messageDiv = document.createElement('div');
-            messageDiv.className = `message ${type}`;
-            
-            const wrapper = document.createElement('div');
-            wrapper.className = 'message-wrapper';
-            
-            const avatar = document.createElement('div');
-            avatar.className = 'avatar';
-            avatar.textContent = type === 'user' ? '👤' : '🤖';
-            
-            const contentDiv = document.createElement('div');
-            contentDiv.className = 'message-content';
-            contentDiv.textContent = content;
-            
-            // Add execution details for bot messages
-            if (type === 'bot' && executionDetails) {
-                const detailsDiv = document.createElement('div');
-                detailsDiv.className = 'execution-details';
-                
-                let detailsHTML = '<div class="execution-details-title">🤖 AI Processing Details</div>';
-                
-                const req = executionDetails.requirements || {};
-                if (req && Object.keys(req).length > 0) {
-                    if (req.role) detailsHTML += `<div class="execution-metric"><span>Role:</span><span>${req.role}</span></div>`;
-                    if (req.experience_years) detailsHTML += `<div class="execution-metric"><span>Experience:</span><span>${req.experience_years}+ years</span></div>`;
-                    if (req.skills_required && req.skills_required.length > 0) detailsHTML += `<div class="execution-metric"><span>Skills:</span><span>${req.skills_required.join(', ')}</span></div>`;
-                    if (req.location) detailsHTML += `<div class="execution-metric"><span>Location:</span><span>${req.location}</span></div>`;
-                    if (req.languages_explicit && req.languages_explicit.length > 0) detailsHTML += `<div class="execution-metric"><span>Languages (explicit):</span><span>${req.languages_explicit.join(', ')}</span></div>`;
-                    if (req.languages_implicit && req.languages_implicit.length > 0) detailsHTML += `<div class="execution-metric"><span>Languages (inferred):</span><span>${req.languages_implicit.join(', ')}</span></div>`;
-                }
-                
-                detailsHTML += `<div class="execution-metric"><span>Candidates Analyzed:</span><span>${executionDetails.candidates_analyzed || 0}</span></div>`;
-                detailsHTML += `<div class="execution-metric"><span>AI Agents Used:</span><span>${executionDetails.agents_involved || 5}</span></div>`;
-                
-                if (executionDetails.execution_log && executionDetails.execution_log.length > 0) {
-                    detailsHTML += '<div class="execution-log">';
-                    executionDetails.execution_log.forEach(log => {
-                        detailsHTML += `<div class="log-entry">• ${log}</div>`;
-                    });
-                    detailsHTML += '</div>';
-                }
-                
-                detailsDiv.innerHTML = detailsHTML;
-                contentDiv.appendChild(detailsDiv);
-            }
-            
-            wrapper.appendChild(avatar);
-            wrapper.appendChild(contentDiv);
-            messageDiv.appendChild(wrapper);
-            
-            messagesDiv.appendChild(messageDiv);
-            messagesDiv.scrollTop = messagesDiv.scrollHeight;
-        }
-
-        function showTyping(show) {
-            const indicator = document.getElementById('typingIndicator');
-            indicator.classList.toggle('active', show);
-            const messagesDiv = document.getElementById('messages');
-            messagesDiv.scrollTop = messagesDiv.scrollHeight;
-        }
-
-        function activateAgents() {
-            const badges = ['parser-badge', 'search-badge', 'enhance-badge', 'score-badge', 'rank-badge'];
-            badges.forEach((badge, index) => {
-                setTimeout(() => {
-                    document.getElementById(badge)?.classList.add('active');
-                }, index * 300);
-            });
-        }
-
-        function deactivateAgents() {
-            const badges = ['parser-badge', 'search-badge', 'enhance-badge', 'score-badge', 'rank-badge'];
-            badges.forEach(badge => {
-                document.getElementById(badge)?.classList.remove('active');
-            });
         }
 
         async function uploadFiles() {
             const fileInput = document.getElementById('fileInput');
             const files = fileInput.files;
-            const status = document.getElementById('uploadStatus');
 
-            if (files.length === 0) return;
+            if (files.length === 0) {
+                alert('Please select files to upload');
+                return;
+            }
 
-            status.className = 'upload-status processing';
-            status.innerHTML = `⏳ Processing ${files.length} resumes with AI enhancement...`;
+            const uploadButton = document.getElementById('uploadButton');
+            uploadButton.disabled = true;
+            uploadButton.textContent = 'Uploading...';
 
             const formData = new FormData();
             for (let file of files) {
@@ -790,58 +571,173 @@
             }
 
             try {
-                const response = await fetch(`${API_BASE}/upload`, {
+                const response = await fetch(`${API_URL}/upload`, {
                     method: 'POST',
                     body: formData
                 });
 
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-
                 const data = await response.json();
-
-                status.className = 'upload-status success';
-                status.textContent = `✅ Success! Processed ${data.processed} resumes with AI language & cultural analysis`;
-
-                fileInput.value = '';
-                updateStats();
                 
-                setTimeout(() => {
-                    addMessage('bot', `✅ Upload complete! Processed ${data.processed} resumes.\n\nAI has analyzed international experience, inferred languages, and extracted cultural competencies. Try any query now!`);
-                }, 1000);
-
+                addBotMessage(`✅ Successfully uploaded ${data.processed} resumes!`);
+                fileInput.value = '';
+                loadStats();
             } catch (error) {
-                console.error('Upload error:', error);
-                status.className = 'upload-status error';
-                status.textContent = '❌ Upload failed. Ensure API server is running on port 8000.';
+                addBotMessage(`❌ Upload failed: ${error.message}`);
+            } finally {
+                uploadButton.disabled = false;
+                uploadButton.textContent = 'Upload Resumes';
             }
         }
 
-        // Drag and drop
-        const uploadSection = document.querySelector('.upload-section');
-        
-        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-            uploadSection?.addEventListener(eventName, (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-            });
-        });
+        async function sendMessage() {
+            if (isProcessing) return;
 
-        uploadSection?.addEventListener('drop', (e) => {
-            const dt = e.dataTransfer;
-            const files = dt.files;
-            document.getElementById('fileInput').files = files;
-            uploadFiles();
-        });
+            const messageInput = document.getElementById('messageInput');
+            const message = messageInput.value.trim();
 
-        // Enter to send (Shift+Enter for new line)
-        textarea.addEventListener('keydown', function(e) {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                document.querySelector('.input-form').dispatchEvent(new Event('submit'));
+            if (!message) return;
+
+            // Add user message
+            addUserMessage(message);
+            messageInput.value = '';
+
+            // Show thinking indicator
+            const thinkingId = addThinkingMessage();
+            isProcessing = true;
+            updateSendButton(true);
+
+            try {
+                const response = await fetch(`${API_URL}/chat`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ message })
+                });
+
+                const data = await response.json();
+                
+                // Remove thinking message
+                removeMessage(thinkingId);
+
+                // Add bot response with reasoning
+                addBotMessageWithReasoning(data);
+            } catch (error) {
+                removeMessage(thinkingId);
+                addBotMessage(`❌ Error: ${error.message}`);
+            } finally {
+                isProcessing = false;
+                updateSendButton(false);
             }
-        });
+        }
+
+        function addUserMessage(message) {
+            const messagesContainer = document.getElementById('messagesContainer');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message user';
+            messageDiv.innerHTML = `
+                <div class="message-content">${escapeHtml(message)}</div>
+                <div class="message-meta">You • Just now</div>
+            `;
+            messagesContainer.appendChild(messageDiv);
+            scrollToBottom();
+        }
+
+        function addBotMessage(message) {
+            const messagesContainer = document.getElementById('messagesContainer');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message bot';
+            messageDiv.innerHTML = `
+                <div class="message-content">${message}</div>
+                <div class="message-meta">Arytic AI • Just now</div>
+            `;
+            messagesContainer.appendChild(messageDiv);
+            scrollToBottom();
+        }
+
+        function addBotMessageWithReasoning(data) {
+            const messagesContainer = document.getElementById('messagesContainer');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message bot';
+            
+            let reasoningHtml = '';
+            if (data.reasoning && data.reasoning.length > 0) {
+                reasoningHtml = `
+                    <div class="agent-thinking">
+                        <h5>🧠 Agent Reasoning Process</h5>
+                        ${data.reasoning.map(step => `
+                            <div class="thinking-step">${escapeHtml(step)}</div>
+                        `).join('')}
+                    </div>
+                `;
+            }
+
+            messageDiv.innerHTML = `
+                <div class="message-content">
+                    ${formatMessage(data.response)}
+                    ${reasoningHtml}
+                    <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #e2e8f0; font-size: 0.9em; color: #64748b;">
+                        <strong>📊 Search Results:</strong> ${data.candidates_found} candidates analyzed
+                    </div>
+                </div>
+                <div class="message-meta">Arytic AI • Just now</div>
+            `;
+            messagesContainer.appendChild(messageDiv);
+            scrollToBottom();
+        }
+
+        function addThinkingMessage() {
+            const messagesContainer = document.getElementById('messagesContainer');
+            const messageDiv = document.createElement('div');
+            const id = 'thinking-' + Date.now();
+            messageDiv.id = id;
+            messageDiv.className = 'message bot';
+            messageDiv.innerHTML = `
+                <div class="message-content">
+                    <div class="agent-thinking">
+                        <h5>🤖 AI Agents Working</h5>
+                        <div class="thinking-step">Query Analyzer is understanding your request<span class="loading"></span></div>
+                        <div class="thinking-step">Searching candidate database<span class="loading"></span></div>
+                        <div class="thinking-step">Candidate Intelligence analyzing profiles<span class="loading"></span></div>
+                        <div class="thinking-step">Synthesizing recommendations<span class="loading"></span></div>
+                    </div>
+                </div>
+            `;
+            messagesContainer.appendChild(messageDiv);
+            scrollToBottom();
+            return id;
+        }
+
+        function removeMessage(id) {
+            const element = document.getElementById(id);
+            if (element) {
+                element.remove();
+            }
+        }
+
+        function updateSendButton(disabled) {
+            const sendButton = document.getElementById('sendButton');
+            sendButton.disabled = disabled;
+            sendButton.textContent = disabled ? 'Processing...' : 'Send';
+        }
+
+        function formatMessage(message) {
+            // Convert markdown-style formatting to HTML
+            message = message.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+            message = message.replace(/\n/g, '<br>');
+            return message;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function scrollToBottom() {
+            const container = document.getElementById('messagesContainer');
+            container.scrollTop = container.scrollHeight;
+        }
     </script>
 </body>
 </html>
